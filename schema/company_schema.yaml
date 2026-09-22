@@ -1,0 +1,87 @@
+# 演示业务库 company_ops 的 schema 元数据。
+# 生产建议：information_schema 自动抽取 + DBA 补充中文注释/枚举/业务指标口径。
+database: company_ops
+
+tables:
+  - name: employee
+    cn_name: 员工表
+    comment: 员工基础信息、部门归属、薪资
+    columns:
+      - {name: emp_id, type: BIGINT, cn: 员工ID, pk: true}
+      - {name: name, type: VARCHAR(64), cn: 姓名}
+      - {name: dept_id, type: BIGINT, cn: 部门ID, fk: department.dept_id}
+      - {name: hire_date, type: DATE, cn: 入职日期}
+      - {name: salary, type: DECIMAL(12,2), cn: 月薪, sensitive: true, comment: 薪资属敏感数据}
+      - {name: id_card, type: CHAR(18), cn: 身份证号, sensitive: true}
+
+  - name: department
+    cn_name: 部门表
+    comment: 部门及所属事业部
+    columns:
+      - {name: dept_id, type: BIGINT, cn: 部门ID, pk: true}
+      - {name: dept_name, type: VARCHAR(64), cn: 部门名称}
+      - {name: bu_id, type: BIGINT, cn: 事业部ID}
+
+  - name: performance
+    cn_name: 绩效表
+    comment: 员工月度绩效得分与奖金
+    columns:
+      - {name: perf_id, type: BIGINT, cn: 记录ID, pk: true}
+      - {name: emp_id, type: BIGINT, cn: 员工ID, fk: employee.emp_id}
+      - {name: month, type: CHAR(7), cn: 月份, comment: 格式 YYYY-MM}
+      - {name: score, type: DECIMAL(5,2), cn: 绩效得分}
+      - {name: bonus, type: DECIMAL(12,2), cn: 奖金, sensitive: true}
+
+  - name: attendance
+    cn_name: 考勤表
+    comment: 员工每日考勤状态
+    columns:
+      - {name: att_id, type: BIGINT, cn: 记录ID, pk: true}
+      - {name: emp_id, type: BIGINT, cn: 员工ID, fk: employee.emp_id}
+      - {name: work_date, type: DATE, cn: 考勤日期}
+      - {name: status, type: VARCHAR(16), cn: 状态, enum: [normal, late, absent, leave]}
+
+  - name: project
+    cn_name: 项目表
+    comment: 项目归属部门、预算与状态
+    columns:
+      - {name: project_id, type: BIGINT, cn: 项目ID, pk: true}
+      - {name: project_name, type: VARCHAR(128), cn: 项目名称}
+      - {name: dept_id, type: BIGINT, cn: 部门ID, fk: department.dept_id}
+      - {name: budget, type: DECIMAL(14,2), cn: 预算}
+      - {name: status, type: VARCHAR(16), cn: 状态, enum: [active, closed]}
+
+  - name: customer
+    cn_name: 客户表
+    comment: 客户信息及负责人
+    columns:
+      - {name: cust_id, type: BIGINT, cn: 客户ID, pk: true}
+      - {name: cust_name, type: VARCHAR(128), cn: 客户名称}
+      - {name: owner_emp_id, type: BIGINT, cn: 负责人员工ID, fk: employee.emp_id}
+      - {name: level, type: CHAR(1), cn: 客户等级, enum: [A, B, C]}
+      - {name: industry, type: VARCHAR(64), cn: 行业}
+
+  - name: revenue
+    cn_name: 收入表
+    comment: 部门月度收入
+    columns:
+      - {name: rev_id, type: BIGINT, cn: 记录ID, pk: true}
+      - {name: month, type: CHAR(7), cn: 月份, comment: 格式 YYYY-MM}
+      - {name: dept_id, type: BIGINT, cn: 部门ID, fk: department.dept_id}
+      - {name: amount, type: DECIMAL(14,2), cn: 收入金额}
+
+  - name: cost
+    cn_name: 成本表
+    comment: 部门月度成本明细
+    columns:
+      - {name: cost_id, type: BIGINT, cn: 记录ID, pk: true}
+      - {name: month, type: CHAR(7), cn: 月份, comment: 格式 YYYY-MM}
+      - {name: dept_id, type: BIGINT, cn: 部门ID, fk: department.dept_id}
+      - {name: item, type: VARCHAR(64), cn: 成本科目}
+      - {name: amount, type: DECIMAL(14,2), cn: 成本金额}
+
+metrics:
+  月度总营收: "SUM(revenue.amount) GROUP BY revenue.month"
+  部门毛利率: "(revenue.amount - cost.amount) / revenue.amount"
+  人均绩效: "AVG(performance.score) 关联 employee"
+  迟到率: "COUNT(status='late') / COUNT(*) FROM attendance"
