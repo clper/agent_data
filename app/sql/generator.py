@@ -25,7 +25,7 @@ GENERATE_SYSTEM = """你是一个企业数据查询助手。根据用户问题�
 1. 只使用提供的表，不要编造不存在的表或列
 2. 标记 [敏感] 的列不要出现在 SELECT 中
 3. WHERE 条件中的具体值用 %s 占位，参数单独列出
-4. 必须指定 intent：data_query / meta / out_of_scope
+4. 必须指定 intent：data_query / out_of_scope
 5. 如果问题无法用提供的表回答，intent 设为 out_of_scope
 
 输出 JSON 格式：
@@ -95,6 +95,22 @@ def _parse_plan(
     if not valid_tables and intent == "data_query":
         # 没有合法表，降级为 out_of_scope
         intent = "out_of_scope"
+    elif intent == "out_of_scope" and not valid_tables:
+        # LLM 判断为超范围且未指定表，但 Router 已确认为 data_query
+        # 使用 Schema RAG 的 top 表构建基础计划
+        fallback_tables = [t.lower() for t in retrieval_result.table_names[:2]]
+        if fallback_tables:
+            logger.info("Overriding out_of_scope -> data_query (fallback tables: %s)", fallback_tables)
+            valid_tables = fallback_tables
+            intent = "data_query"
+            # 构建基础 SELECT * 让权限系统处理列过滤
+            d["target_tables"] = fallback_tables
+            d["select_columns"] = ["*"]
+            d["limit"] = 100  # 覆盖 LLM 可能返回的 limit=0
+    elif intent == "out_of_scope" and valid_tables:
+        # LLM 判断为超范围，但有合法表可用，强制改为 data_query
+        logger.info("Overriding out_of_scope -> data_query (valid tables: %s)", valid_tables)
+        intent = "data_query"
 
     # 解析 JOIN
     joins: list[JoinClause] = []

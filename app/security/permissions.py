@@ -48,7 +48,8 @@ class EmployeeRowPredicate(RowPredicateGenerator):
 
     def generate(self, user: UserContext, table_name: str) -> tuple[str, list[Any]] | None:
         if table_name in ("employee", "performance", "attendance"):
-            return f"{table_name}.emp_id = %s", [user.user_id]
+            # 转换为 int，避免字符串与 BIGINT 列的类型不匹配
+            return f"{table_name}.emp_id = %s", [int(user.user_id)]
         return None
 
 
@@ -60,6 +61,9 @@ class DeptLeadRowPredicate(RowPredicateGenerator):
             return f"{table_name}.dept_id = %s", [user.department_id]
         if table_name in ("department",):
             return f"department.dept_id = %s", [user.department_id]
+        # revenue 和 cost 表也有 dept_id，部门主管应能查看本部门财务数据
+        if table_name in ("revenue", "cost"):
+            return f"{table_name}.dept_id = %s", [user.department_id]
         return None
 
 
@@ -124,10 +128,15 @@ class PermissionChecker:
         应用列级权限：从 SELECT 中移除敏感列。
 
         如果 SELECT *，展开为可见列列表。
+        注意：必须在 apply_row_permissions 之后调用，
+        以便检测"仅查自身数据"的场景（此时 salary 应可见）。
         """
         rule = PERMISSION_RULES.get(user.role)
         if not rule:
             return plan
+
+        # 检测是否为"仅查自身数据"的查询
+        is_self_query = self._is_self_query(plan, user)
 
         # 展开 SELECT *
         expanded_cols: list[str] = []
@@ -147,7 +156,7 @@ class PermissionChecker:
         # 过滤敏感列
         filtered_cols: list[str] = []
         for col_expr in expanded_cols:
-            if self._is_column_allowed(col_expr, plan.target_tables, user.role):
+            if self._is_column_allowed(col_expr, plan.target_tables, user.role, is_self_query):
                 filtered_cols.append(col_expr)
             else:
                 logger.info("Column permission denied for: %s", col_expr)
@@ -177,7 +186,26 @@ class PermissionChecker:
 
         return plan
 
-    def _is_column_allowed(self, col_expr: str, tables: list[str], role: str) -> bool:
+    def _is_self_query(self, plan: QueryPlan, user: UserContext) -> bool:
+        """
+        检测当前查询是否仅限于用户自身数据。
+
+        如果 WHERE 条件中已注入 emp_id = user_id（行级权限），
+        则该查询只返回用户自己的数据，此时 salary 等敏感列应可见。
+        """
+        if user.role != "employee":
+            return False
+        emp_id_str = str(int(user.user_id))
+        for cond in plan.where_conditions:
+            if f"emp_id = %s" in cond and any(
+                str(p) == emp_id_str for p in plan.where_params
+            ):
+                return True
+        return False
+
+    def _is_column_allowed(
+        self, col_expr: str, tables: list[str], role: str, is_self_query: bool = False
+    ) -> bool:
         """检查列是否被允许访问"""
         rule = PERMISSION_RULES.get(role)
         if not rule:
@@ -188,6 +216,10 @@ class PermissionChecker:
 
         # 函数调用（如 COUNT(*)）放行
         if "(" in col_expr:
+            return True
+
+        # 员工查自身数据时，salary 可见
+        if is_self_query and col_name == "salary" and role == "employee":
             return True
 
         for table_name in tables:

@@ -1,87 +1,121 @@
 # 演示业务库 company_ops 的 schema 元数据。
 # 生产建议：information_schema 自动抽取 + DBA 补充中文注释/枚举/业务指标口径。
+#
+# 规范：
+# - cn: 列的中文名称（简短）
+# - comment: 业务含义、枚举中文释义、计算口径等（供 BM25 检索和 LLM 理解）
+# - enum: 枚举值的原始值列表
 database: company_ops
 
 tables:
+  # ═══════════════════════════════════════════
+  # 员工表
+  # ═══════════════════════════════════════════
   - name: employee
     cn_name: 员工表
-    comment: 员工基础信息、部门归属、薪资
+    comment: 员工基础信息，包含姓名、部门归属、入职日期、薪资等。支持按部门/姓名/入职时间查询员工
     columns:
-      - {name: emp_id, type: BIGINT, cn: 员工ID, pk: true}
-      - {name: name, type: VARCHAR(64), cn: 姓名}
-      - {name: dept_id, type: BIGINT, cn: 部门ID, fk: department.dept_id}
-      - {name: hire_date, type: DATE, cn: 入职日期}
-      - {name: salary, type: DECIMAL(12,2), cn: 月薪, sensitive: true, comment: 薪资属敏感数据}
-      - {name: id_card, type: CHAR(18), cn: 身份证号, sensitive: true}
+      - {name: emp_id, type: BIGINT, cn: 员工ID, pk: true, comment: "员工唯一编号，即工号"}
+      - {name: name, type: VARCHAR(64), cn: 姓名, comment: "员工姓名，如张三、李四"}
+      - {name: dept_id, type: BIGINT, cn: 部门ID, fk: department.dept_id, comment: "所属部门编号，关联 department 表"}
+      - {name: hire_date, type: DATE, cn: 入职日期, comment: "员工入职日期，格式 YYYY-MM-DD"}
+      - {name: salary, type: DECIMAL(12,2), cn: 月薪, sensitive: true, comment: "员工月度基本工资（元），属敏感数据，普通员工仅可查自己的薪资"}
+      - {name: id_card, type: CHAR(18), cn: 身份证号, sensitive: true, comment: "员工身份证号码，属高度敏感信息，任何角色不可查看"}
 
+  # ═══════════════════════════════════════════
+  # 部门表
+  # ═══════════════════════════════════════════
   - name: department
     cn_name: 部门表
-    comment: 部门及所属事业部
+    comment: 公司组织架构中的部门信息，每个部门隶属于一个事业部。当前有销售部、研发部、市场部
     columns:
-      - {name: dept_id, type: BIGINT, cn: 部门ID, pk: true}
-      - {name: dept_name, type: VARCHAR(64), cn: 部门名称}
-      - {name: bu_id, type: BIGINT, cn: 事业部ID}
+      - {name: dept_id, type: BIGINT, cn: 部门ID, pk: true, comment: "部门唯一编号"}
+      - {name: dept_name, type: VARCHAR(64), cn: 部门名称, comment: "部门中文名，如销售部、研发部、市场部"}
+      - {name: bu_id, type: BIGINT, cn: 事业部ID, comment: "所属事业部编号，用于事业部级别的汇总查询"}
 
+  # ═══════════════════════════════════════════
+  # 绩效表
+  # ═══════════════════════════════════════════
   - name: performance
     cn_name: 绩效表
-    comment: 员工月度绩效得分与奖金
+    comment: 员工月度绩效考核记录，包含绩效得分和奖金。支持按月份/部门/员工查询绩效排名、绩效得分
     columns:
-      - {name: perf_id, type: BIGINT, cn: 记录ID, pk: true}
-      - {name: emp_id, type: BIGINT, cn: 员工ID, fk: employee.emp_id}
-      - {name: month, type: CHAR(7), cn: 月份, comment: 格式 YYYY-MM}
-      - {name: score, type: DECIMAL(5,2), cn: 绩效得分}
-      - {name: bonus, type: DECIMAL(12,2), cn: 奖金, sensitive: true}
+      - {name: perf_id, type: BIGINT, cn: 记录ID, pk: true, comment: "绩效记录唯一编号"}
+      - {name: emp_id, type: BIGINT, cn: 员工ID, fk: employee.emp_id, comment: "被考核的员工编号"}
+      - {name: month, type: CHAR(7), cn: 考核月份, comment: "绩效所属月份，格式 YYYY-MM，如 2026-06"}
+      - {name: score, type: DECIMAL(5,2), cn: 绩效得分, comment: "月度绩效评分，满分100分，分数越高性能越好"}
+      - {name: bonus, type: DECIMAL(12,2), cn: 绩效奖金, sensitive: true, comment: "根据绩效得分计算的奖金金额（元），属敏感数据"}
 
+  # ═══════════════════════════════════════════
+  # 考勤表
+  # ═══════════════════════════════════════════
   - name: attendance
     cn_name: 考勤表
-    comment: 员工每日考勤状态
+    comment: 员工每日考勤状态记录，可查询迟到、缺勤、请假、正常出勤情况。支持按月份/部门/员工查询考勤
     columns:
-      - {name: att_id, type: BIGINT, cn: 记录ID, pk: true}
-      - {name: emp_id, type: BIGINT, cn: 员工ID, fk: employee.emp_id}
-      - {name: work_date, type: DATE, cn: 考勤日期}
-      - {name: status, type: VARCHAR(16), cn: 状态, enum: [normal, late, absent, leave]}
+      - {name: att_id, type: BIGINT, cn: 记录ID, pk: true, comment: "考勤记录唯一编号"}
+      - {name: emp_id, type: BIGINT, cn: 员工ID, fk: employee.emp_id, comment: "考勤对应的员工编号"}
+      - {name: work_date, type: DATE, cn: 考勤日期, comment: "考勤日期，格式 YYYY-MM-DD"}
+      - {name: status, type: VARCHAR(16), cn: 考勤状态, enum: [normal, late, absent, leave], comment: "考勤状态：normal=正常出勤, late=迟到, absent=缺勤/旷工, leave=请假"}
 
+  # ═══════════════════════════════════════════
+  # 项目表
+  # ═══════════════════════════════════════════
   - name: project
     cn_name: 项目表
-    comment: 项目归属部门、预算与状态
+    comment: 公司项目信息，包含项目名称、归属部门、预算和状态。支持查询正在进行的项目、项目预算
     columns:
-      - {name: project_id, type: BIGINT, cn: 项目ID, pk: true}
-      - {name: project_name, type: VARCHAR(128), cn: 项目名称}
-      - {name: dept_id, type: BIGINT, cn: 部门ID, fk: department.dept_id}
-      - {name: budget, type: DECIMAL(14,2), cn: 预算}
-      - {name: status, type: VARCHAR(16), cn: 状态, enum: [active, closed]}
+      - {name: project_id, type: BIGINT, cn: 项目ID, pk: true, comment: "项目唯一编号"}
+      - {name: project_name, type: VARCHAR(128), cn: 项目名称, comment: "项目名称，如 A项目、B项目"}
+      - {name: dept_id, type: BIGINT, cn: 部门ID, fk: department.dept_id, comment: "项目负责部门编号"}
+      - {name: budget, type: DECIMAL(14,2), cn: 项目预算, comment: "项目总预算金额（元）"}
+      - {name: status, type: VARCHAR(16), cn: 项目状态, enum: [active, closed], comment: "项目状态：active=进行中/活跃, closed=已关闭/已结束"}
 
+  # ═══════════════════════════════════════════
+  # 客户表
+  # ═══════════════════════════════════════════
   - name: customer
     cn_name: 客户表
-    comment: 客户信息及负责人
+    comment: 公司客户信息，包含客户名称、等级、行业和负责人。支持按客户名/等级/行业查询客户及负责人
     columns:
-      - {name: cust_id, type: BIGINT, cn: 客户ID, pk: true}
-      - {name: cust_name, type: VARCHAR(128), cn: 客户名称}
-      - {name: owner_emp_id, type: BIGINT, cn: 负责人员工ID, fk: employee.emp_id}
-      - {name: level, type: CHAR(1), cn: 客户等级, enum: [A, B, C]}
-      - {name: industry, type: VARCHAR(64), cn: 行业}
+      - {name: cust_id, type: BIGINT, cn: 客户ID, pk: true, comment: "客户唯一编号"}
+      - {name: cust_name, type: VARCHAR(128), cn: 客户名称, comment: "客户公司名称，如客户甲、客户乙"}
+      - {name: owner_emp_id, type: BIGINT, cn: 负责人员工ID, fk: employee.emp_id, comment: "客户负责人（客户经理）的员工编号"}
+      - {name: level, type: CHAR(1), cn: 客户等级, enum: [A, B, C], comment: "客户优先级：A=重要客户, B=普通客户, C=低优先级客户"}
+      - {name: industry, type: VARCHAR(64), cn: 所属行业, comment: "客户所在行业，如互联网、金融、制造"}
 
+  # ═══════════════════════════════════════════
+  # 收入表
+  # ═══════════════════════════════════════════
   - name: revenue
     cn_name: 收入表
-    comment: 部门月度收入
+    comment: 各部门月度营业收入记录。支持按月份/部门查询收入、营收趋势、收入排名
     columns:
-      - {name: rev_id, type: BIGINT, cn: 记录ID, pk: true}
-      - {name: month, type: CHAR(7), cn: 月份, comment: 格式 YYYY-MM}
-      - {name: dept_id, type: BIGINT, cn: 部门ID, fk: department.dept_id}
-      - {name: amount, type: DECIMAL(14,2), cn: 收入金额}
+      - {name: rev_id, type: BIGINT, cn: 记录ID, pk: true, comment: "收入记录唯一编号"}
+      - {name: month, type: CHAR(7), cn: 月份, comment: "收入所属月份，格式 YYYY-MM，如 2026-06"}
+      - {name: dept_id, type: BIGINT, cn: 部门ID, fk: department.dept_id, comment: "产生收入的部门编号"}
+      - {name: amount, type: DECIMAL(14,2), cn: 收入金额, comment: "当月营业收入金额（元）"}
 
+  # ═══════════════════════════════════════════
+  # 成本表
+  # ═══════════════════════════════════════════
   - name: cost
     cn_name: 成本表
-    comment: 部门月度成本明细
+    comment: 各部门月度成本明细，按成本科目分类。支持按月份/部门/科目查询成本、费用构成
     columns:
-      - {name: cost_id, type: BIGINT, cn: 记录ID, pk: true}
-      - {name: month, type: CHAR(7), cn: 月份, comment: 格式 YYYY-MM}
-      - {name: dept_id, type: BIGINT, cn: 部门ID, fk: department.dept_id}
-      - {name: item, type: VARCHAR(64), cn: 成本科目}
-      - {name: amount, type: DECIMAL(14,2), cn: 成本金额}
+      - {name: cost_id, type: BIGINT, cn: 记录ID, pk: true, comment: "成本记录唯一编号"}
+      - {name: month, type: CHAR(7), cn: 月份, comment: "成本所属月份，格式 YYYY-MM，如 2026-06"}
+      - {name: dept_id, type: BIGINT, cn: 部门ID, fk: department.dept_id, comment: "发生成本的部门编号"}
+      - {name: item, type: VARCHAR(64), cn: 成本科目, comment: "成本类别，如人力成本、办公费、差旅费、营销费"}
+      - {name: amount, type: DECIMAL(14,2), cn: 成本金额, comment: "当月该科目成本金额（元）"}
 
+# ═══════════════════════════════════════════
+# 预定义业务指标（供 LLM 参考计算口径）
+# ═══════════════════════════════════════════
 metrics:
   月度总营收: "SUM(revenue.amount) GROUP BY revenue.month"
-  部门毛利率: "(revenue.amount - cost.amount) / revenue.amount"
+  部门毛利率: "利润率 = (revenue.amount - cost.amount) / revenue.amount * 100%"
   人均绩效: "AVG(performance.score) 关联 employee"
   迟到率: "COUNT(status='late') / COUNT(*) FROM attendance"
+  总成本: "SUM(cost.amount) 可按部门/月份/科目分组"
+  净利润: "净利润 = 总收入 - 总成本"

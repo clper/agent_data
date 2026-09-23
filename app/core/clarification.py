@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.core.llm import ChatMessage, LLMClient
+from app.models.state import UserContext
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +26,12 @@ INTENT_NEED_CLARIFICATION = "need_clarification"  # 需要追问
 UNDERSTAND_SYSTEM = """你是一个企业数据问答助手。你的任务是分析用户的问题，判断其意图类型。
 
 意图分类：
-- data_query: 需要查询数据库才能得到答案的问题（如"上个月销售部业绩多少"）
+- data_query: 需要查询数据库才能得到答案的问题
+  - 示例："上个月销售部业绩多少"、"张三的入职日期"、"查看我的薪资"、"谁迟到了"
+  - 注意：薪资、绩效、考勤、收入、成本等查询都属于 data_query，即使用户说"我的"也是
 - meta: 询问系统能力或数据库结构的问题（如"你能查哪些数据"、"有哪些表"）
-- out_of_scope: 超出数据查询范围的问题（如"帮我写代码"、"今天天气怎样"）
+- out_of_scope: 完全与数据库无关的问题（如"帮我写代码"、"今天天气怎样"、"翻译这句话"）
+  - 注意：只有完全无法通过数据库回答的问题才是 out_of_scope
 - need_clarification: 问题缺少关键信息，需要追问（如"业绩怎么样"没说哪个部门/时间段）
 
 输出 JSON 格式：
@@ -52,6 +56,7 @@ def analyze_intent(
     question: str,
     recent_questions: list[str],
     llm: LLMClient,
+    user: UserContext | None = None,
 ) -> UnderstandResult:
     """
     分析用户问题的意图。
@@ -60,12 +65,24 @@ def analyze_intent(
         question: 用户原始问题
         recent_questions: 最近几轮的问题（用于上下文消解）
         llm: LLM 客户端
+        user: 用户身份上下文（可选，用于解析"我的"等指代）
 
     Returns:
         UnderstandResult: 意图分类 + 改写后的问题
     """
     # 构建上下文
     context_parts = []
+
+    # 注入用户身份信息，帮助 LLM 理解"我的"等指代
+    if user:
+        context_parts.append("当前用户身份：")
+        context_parts.append(f"  - user_id (emp_id): {user.user_id}")
+        context_parts.append(f"  - 角色: {user.role}")
+        if user.department_id:
+            context_parts.append(f"  - 部门 ID: {user.department_id}")
+        context_parts.append('注意：当用户说“我的”、“我自己”时，指的就是当前用户。')
+        context_parts.append("")
+
     if recent_questions:
         context_parts.append("历史问题：")
         for q in recent_questions[-3:]:
