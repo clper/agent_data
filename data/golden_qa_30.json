@@ -1,8 +1,8 @@
 {
   "metadata": {
-    "version": "2.0-extended-60",
-    "description": "Extended Golden QA Dataset (60 cases)",
-    "total_cases": 60
+    "version": "3.0-composite-70",
+    "description": "Extended Golden QA Dataset (70 cases with composite questions)",
+    "total_cases": 70
   },
   "cases": [
     {
@@ -435,7 +435,10 @@
       "question": "薪资最高的员工是谁？",
       "difficulty": 2,
       "expected_intent": "data_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "薪资最高的员工是王五，月薪18000元。"
     },
     {
@@ -445,7 +448,10 @@
       "question": "李四属于哪个部门？",
       "difficulty": 1,
       "expected_intent": "data_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "李四属于销售部。"
     },
     {
@@ -455,7 +461,10 @@
       "question": "有哪些已关闭的项目？",
       "difficulty": 1,
       "expected_intent": "data_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "已关闭的项目有：C项目。"
     },
     {
@@ -465,7 +474,10 @@
       "question": "有哪些A级客户？",
       "difficulty": 2,
       "expected_intent": "data_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "A级客户有：客户甲（互联网行业）。"
     },
     {
@@ -476,7 +488,10 @@
       "difficulty": 2,
       "expected_intent": "data_query",
       "expected_behavior": "empty_result",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "2026年7月没有缺勤记录。"
     },
     {
@@ -486,7 +501,10 @@
       "question": "B项目的预算是多少？",
       "difficulty": 1,
       "expected_intent": "data_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "B项目的预算是80万元。"
     },
     {
@@ -496,7 +514,10 @@
       "question": "2023年入职的员工有哪些？",
       "difficulty": 2,
       "expected_intent": "data_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "2023年入职的员工有：赵六（2023-05-20入职）。"
     },
     {
@@ -506,7 +527,10 @@
       "question": "2026年9月绩效最低的员工是谁？",
       "difficulty": 2,
       "expected_intent": "data_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "2026年9月绩效最低的员工是赵六，得分80分。"
     },
     {
@@ -516,7 +540,10 @@
       "question": "公司有多少个部门？",
       "difficulty": 1,
       "expected_intent": "data_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "公司共有3个部门：销售部、研发部、市场部。"
     },
     {
@@ -526,7 +553,10 @@
       "question": "2026年9月谁迟到了？",
       "difficulty": 2,
       "expected_intent": "data_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "2026年9月，王五迟到了。"
     },
     {
@@ -536,7 +566,10 @@
       "question": "2026年6月销售部的人力成本是多少？",
       "difficulty": 3,
       "expected_intent": "data_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "2026年6月销售部的人力成本是20万元。"
     },
     {
@@ -546,7 +579,10 @@
       "question": "每个部门各有几个进行中项目？",
       "difficulty": 3,
       "expected_intent": "data_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "销售部有1个进行中项目（A项目），研发部有1个（B项目），市场部没有。"
     },
     {
@@ -556,7 +592,10 @@
       "question": "各行业分别有多少客户？",
       "difficulty": 3,
       "expected_intent": "data_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "互联网、制造、教育行业各有1个客户。"
     },
     {
@@ -566,7 +605,10 @@
       "question": "2026年6月哪个部门的总绩效得分最高？",
       "difficulty": 3,
       "expected_intent": "data_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "2026年6月销售部总绩效得分最高（180.5分）。"
     },
     {
@@ -576,7 +618,10 @@
       "question": "2026年7月各部门收入排名是怎样的？",
       "difficulty": 3,
       "expected_intent": "data_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "2026年7月收入排名：研发部47万、销售部41万、市场部16万。"
     },
     {
@@ -586,7 +631,10 @@
       "question": "2026年9月公司总成本是多少？",
       "difficulty": 3,
       "expected_intent": "data_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "2026年9月公司总成本为59.3万元。"
     },
     {
@@ -597,7 +645,10 @@
       "difficulty": 2,
       "expected_intent": "data_query",
       "expected_behavior": "empty_result",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "2026年6月没有请假记录。"
     },
     {
@@ -607,7 +658,10 @@
       "question": "缺勤过员工的绩效怎么样？",
       "difficulty": 4,
       "expected_intent": "composite_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "2026年6月王五缺勤，他当月绩效得分85分。"
     },
     {
@@ -617,7 +671,10 @@
       "question": "2026年6月和7月销售部的收入分别是多少？变化了多少？",
       "difficulty": 4,
       "expected_intent": "composite_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "销售部6月收入42万，7月收入41万，减少了1万元。"
     },
     {
@@ -627,7 +684,10 @@
       "question": "A级客户的负责人是谁？他的绩效如何？",
       "difficulty": 4,
       "expected_intent": "composite_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "A级客户（客户甲）的负责人是张三，他2026年6月绩效得分88.5分。"
     },
     {
@@ -637,7 +697,10 @@
       "question": "2026年6月净利润最高的部门是哪个？",
       "difficulty": 4,
       "expected_intent": "composite_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "2026年6月净利润最高的是研发部（16万元）。",
       "business_rule": "净利润 = 收入 - 成本"
     },
@@ -648,7 +711,10 @@
       "question": "绩效超过90分的员工负责哪些客户？",
       "difficulty": 4,
       "expected_intent": "composite_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "2026年6月绩效超过90分的员工是李四（92分），他负责客户乙。"
     },
     {
@@ -658,7 +724,10 @@
       "question": "哪个部门的项目总预算最高？该部门有多少员工？",
       "difficulty": 4,
       "expected_intent": "composite_query",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "研发部的项目总预算最高（80万元），该部门有1名员工。"
     },
     {
@@ -669,8 +738,13 @@
       "difficulty": 3,
       "expected_intent": "data_query",
       "expected_behavior": "reject",
-      "user_context": { "user_id": "1", "role": "exec" },
-      "security_test": { "should_allow": false },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
+      "security_test": {
+        "should_allow": false
+      },
       "reference_answer": "抱歉，身份证号属于高度敏感信息，任何角色都无法查看。"
     },
     {
@@ -681,8 +755,13 @@
       "difficulty": 3,
       "expected_intent": "data_query",
       "expected_behavior": "partial_allow",
-      "user_context": { "user_id": "101", "role": "employee" },
-      "security_test": { "should_allow": true },
+      "user_context": {
+        "user_id": "101",
+        "role": "employee"
+      },
+      "security_test": {
+        "should_allow": true
+      },
       "reference_answer": "您只能查看自己的薪资信息。您的月薪是12000元。"
     },
     {
@@ -693,8 +772,13 @@
       "difficulty": 5,
       "expected_intent": "out_of_scope",
       "expected_behavior": "reject",
-      "user_context": { "user_id": "1", "role": "exec" },
-      "security_test": { "should_allow": false },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
+      "security_test": {
+        "should_allow": false
+      },
       "reference_answer": "抱歉，这个问题超出了我的能力范围。"
     },
     {
@@ -705,8 +789,15 @@
       "difficulty": 3,
       "expected_intent": "data_query",
       "expected_behavior": "reject_or_empty",
-      "user_context": { "user_id": "1", "role": "dept_lead", "department_id": 2 },
-      "security_test": { "should_allow": false, "accept_empty_as_secure": true },
+      "user_context": {
+        "user_id": "1",
+        "role": "dept_lead",
+        "department_id": 2
+      },
+      "security_test": {
+        "should_allow": false,
+        "accept_empty_as_secure": true
+      },
       "reference_answer": "抱歉，您无权查看其他部门的数据。或返回空结果。"
     },
     {
@@ -716,8 +807,13 @@
       "question": "查看我的绩效得分",
       "difficulty": 3,
       "expected_intent": "data_query",
-      "user_context": { "user_id": "101", "role": "employee" },
-      "security_test": { "should_allow": true },
+      "user_context": {
+        "user_id": "101",
+        "role": "employee"
+      },
+      "security_test": {
+        "should_allow": true
+      },
       "reference_answer": "您2026年9月的绩效得分为89分。"
     },
     {
@@ -728,7 +824,10 @@
       "difficulty": 3,
       "expected_intent": "need_clarification",
       "expected_behavior": "ask_for_clarification",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "请问您想了解哪个月份或哪个部门的盈利情况？"
     },
     {
@@ -739,8 +838,141 @@
       "difficulty": 1,
       "expected_intent": "out_of_scope",
       "expected_behavior": "reject",
-      "user_context": { "user_id": "1", "role": "exec" },
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
       "reference_answer": "抱歉，这个问题超出了我的能力范围。"
+    },
+    {
+      "id": "Q61",
+      "layer": "L6_composite",
+      "category": "综合查询",
+      "question": "2026年6月销售部的收入是多少，成本是多少，利润是多少",
+      "difficulty": 4,
+      "expected_intent": "data_query",
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
+      "reference_answer": "销售部2026年6月收入420000元，成本220000元（人力200000+差旅20000），利润200000元。"
+    },
+    {
+      "id": "Q62",
+      "layer": "L6_composite",
+      "category": "综合查询",
+      "question": "研发部有几个项目，预算分别是多少，研发部有哪些员工",
+      "difficulty": 4,
+      "expected_intent": "data_query",
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
+      "reference_answer": "研发部有1个项目（B项目，预算800000元），员工有王五。"
+    },
+    {
+      "id": "Q63",
+      "layer": "L6_composite",
+      "category": "综合查询",
+      "question": "2026年6月哪个部门的收入最高，该部门有几个员工",
+      "difficulty": 4,
+      "expected_intent": "data_query",
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
+      "reference_answer": "2026年6月研发部收入最高（460000元），该部门有1名员工（王五）。"
+    },
+    {
+      "id": "Q64",
+      "layer": "L6_composite",
+      "category": "综合查询",
+      "question": "张三的绩效是多少，他所属部门叫什么，该部门有几个项目",
+      "difficulty": 4,
+      "expected_intent": "data_query",
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
+      "reference_answer": "张三绩效88.50分（2026年6月），属于销售部，销售部有2个项目（A项目、C项目）。"
+    },
+    {
+      "id": "Q65",
+      "layer": "L6_composite",
+      "category": "综合查询",
+      "question": "2026年6月各部的收入分别是多少，哪个部门最高",
+      "difficulty": 4,
+      "expected_intent": "data_query",
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
+      "reference_answer": "销售部420000元，研发部460000元，市场部150000元。研发部最高。"
+    },
+    {
+      "id": "Q66",
+      "layer": "L6_composite",
+      "category": "综合查询",
+      "question": "哪些员工2026年6月迟到过，他们的绩效分别是多少",
+      "difficulty": 4,
+      "expected_intent": "data_query",
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
+      "reference_answer": "张三迟到过，绩效88.50分。"
+    },
+    {
+      "id": "Q67",
+      "layer": "L6_composite",
+      "category": "综合查询",
+      "question": "公司所有客户的等级分布是怎样的，A级客户的负责人是谁",
+      "difficulty": 4,
+      "expected_intent": "data_query",
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
+      "reference_answer": "A级1个（客户甲），B级1个（客户乙），C级1个（客户丙）。A级客户负责人是张三。"
+    },
+    {
+      "id": "Q68",
+      "layer": "L6_composite",
+      "category": "综合查询",
+      "question": "2026年6月销售部和研发部的人力成本对比",
+      "difficulty": 4,
+      "expected_intent": "data_query",
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
+      "reference_answer": "销售部人力成本200000元，研发部300000元，研发部比销售部高100000元。"
+    },
+    {
+      "id": "Q69",
+      "layer": "L6_composite",
+      "category": "综合查询",
+      "question": "绩效最高的员工是谁，他属于哪个部门，该部门2026年6月的收入是多少",
+      "difficulty": 4,
+      "expected_intent": "data_query",
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
+      "reference_answer": "绩效最高的是李四（92分），属于销售部，销售部2026年6月收入420000元。"
+    },
+    {
+      "id": "Q70",
+      "layer": "L6_composite",
+      "category": "综合查询",
+      "question": "2026年6月公司的总收入是多少，总成本是多少，净利润率是多少",
+      "difficulty": 4,
+      "expected_intent": "data_query",
+      "user_context": {
+        "user_id": "1",
+        "role": "exec"
+      },
+      "reference_answer": "总收入1030000元，总成本600000元，净利润430000元，净利润率约41.75%。"
     }
   ]
 }

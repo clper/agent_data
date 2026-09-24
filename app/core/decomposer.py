@@ -75,7 +75,9 @@ DECOMPOSE_SYSTEM = """你是一个企业数据查询助手的问题分解专家�
 2. 子问题必须按执行顺序排列（id 从 1 开始递增）
 3. 如果子问题依赖前面的结果，用 `{result_N}` 占位（N 是依赖的子问题 id）
 4. merge_strategy 和 merge_description 必须准确描述如何综合结果
-5. 不要编造数据库中没有的字段或表名"""
+5. 不要编造数据库中没有的字段或表名
+6. 依赖子问题必须设置 depends_on，系统会自动将前序结果数据注入给 SQL 生成层
+7. 子问题不要自行添加额外限制条件（如状态过滤），除非用户明确要求"""
 
 DECOMPOSE_USER_TEMPLATE = """用户问题：{question}
 
@@ -110,10 +112,20 @@ class DecompositionResult:
     @classmethod
     def from_json(cls, json_str: str) -> "DecompositionResult":
         """从 JSON 字符串解析"""
+        # 清理 markdown 代码块标记（LLM 常返回 ```json ... ```）
+        cleaned = json_str.strip()
+        if cleaned.startswith("```"):
+            # 去掉首行 ```json 或 ```
+            first_newline = cleaned.index("\n") if "\n" in cleaned else len(cleaned)
+            cleaned = cleaned[first_newline + 1:]
+            # 去掉末尾 ```
+            if cleaned.rstrip().endswith("```"):
+                cleaned = cleaned.rstrip()[:-3].rstrip()
+
         try:
-            data = json.loads(json_str)
+            data = json.loads(cleaned)
         except json.JSONDecodeError as e:
-            logger.error("Failed to parse decomposition JSON: %s", e)
+            logger.error("Failed to parse decomposition JSON: %s (raw: %s)", e, json_str[:200])
             # 降级：视为简单问题
             return cls(is_composite=False)
 
@@ -153,10 +165,30 @@ def decompose_question(
         ChatMessage(role="user", content=DECOMPOSE_USER_TEMPLATE.format(question=question)),
     ]
 
-    response = llm.chat(messages, temperature=0.1)
-    logger.info("Decomposition response: %s", response[:200])
+    response = llm.chat_json(messages, temperature=0.1)
+    logger.info("Decomposition response: %s", response)
 
-    result = DecompositionResult.from_json(response)
+    # chat_json 已处理 markdown 代码块、JSON 提取等
+    if "error" in response and response.get("error") == "invalid_json":
+        logger.warning("LLM returned invalid JSON for decomposition, falling back to simple")
+        return DecompositionResult(is_composite=False)
+
+    # 从 dict 构建 DecompositionResult
+    sub_questions = []
+    for item in response.get("sub_questions", []):
+        sub_questions.append(SubQuestion(
+            id=item["id"],
+            question=item["question"],
+            depends_on=item.get("depends_on", []),
+            description=item.get("description", ""),
+        ))
+
+    result = DecompositionResult(
+        is_composite=response.get("is_composite", False),
+        sub_questions=sub_questions,
+        merge_strategy=response.get("merge_strategy", ""),
+        merge_description=response.get("merge_description", ""),
+    )
 
     if result.is_composite:
         logger.info(

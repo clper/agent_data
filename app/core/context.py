@@ -69,7 +69,7 @@ class ExecutionContext:
         解析文本中的 {result_N} 占位符。
 
         支持的格式：
-        - {result_N}：替换为第 N 个子问题的第一个结果的第一个字段值
+        - {result_N}：单行→替换为第一个字段值；多行→替换为所有值的列表
         - {result_N.field}：替换为指定字段的值
 
         示例：
@@ -77,6 +77,9 @@ class ExecutionContext:
         "王五 的入职日期"
         >>> ctx.resolve_placeholders("{result_1.name}")
         "王五"
+        >>> # 多行结果：
+        >>> ctx.resolve_placeholders("查询 {result_1} 的业绩")
+        "查询 101, 102 的业绩"
         """
         import re
 
@@ -89,21 +92,27 @@ class ExecutionContext:
             if not result or not result.rows:
                 return match.group(0)  # 保留原样
 
-            # rows[0] 是 tuple，需要转换为 dict（使用 columns）
-            row_tuple = result.rows[0]
             if len(parts) > 1:
-                # 指定了字段名
+                # 指定了字段名 → 取所有行该字段的值
                 field_name = parts[1]
                 if field_name in result.columns:
                     idx = result.columns.index(field_name)
-                    value = row_tuple[idx] if idx < len(row_tuple) else ""
-                    return str(value)
+                    if len(result.rows) == 1:
+                        return str(result.rows[0][idx])
+                    else:
+                        values = [str(row[idx]) for row in result.rows if idx < len(row)]
+                        return ", ".join(values)
                 else:
                     return match.group(0)  # 字段不存在
             else:
-                # 取第一个字段的值
-                first_value = row_tuple[0] if row_tuple else ""
-                return str(first_value)
+                # 未指定字段名
+                if len(result.rows) == 1:
+                    # 单行：取第一个字段（保持原有行为）
+                    return str(result.rows[0][0]) if result.rows[0] else ""
+                else:
+                    # 多行：取所有行的第一个字段值
+                    values = [str(row[0]) for row in result.rows if row]
+                    return ", ".join(values)
 
         # 匹配 {result_N} 或 {result_N.field}
         pattern = r"\{(result_\d+)(?:\.(\w+))?\}"
@@ -111,6 +120,56 @@ class ExecutionContext:
 
         logger.debug("Resolved placeholders: '%s' → '%s'", text, resolved)
         return resolved
+
+    def get_dependency_context(self, sub_q) -> str:
+        """
+        为有依赖的子问题生成上下文描述。
+
+        将依赖的前序子问题结果格式化为自然语言 + 数据表，
+        帮助 LLM 生成正确的 SQL（如 IN 子句）。
+
+        Args:
+            sub_q: SubQuestion 对象（需含 depends_on 属性）
+
+        Returns:
+            上下文描述字符串，无依赖时返回空字符串
+        """
+        if not getattr(sub_q, 'depends_on', None):
+            return ""
+
+        parts = []
+        for dep_id in sub_q.depends_on:
+            result = self.results.get(dep_id)
+            if not result:
+                continue
+
+            if result.error:
+                parts.append(f"[注意：子问题 {dep_id} 执行失败: {result.error}]")
+                continue
+
+            if not result.rows:
+                parts.append(f"[注意：子问题 {dep_id} 返回空结果]")
+                continue
+
+            # 构建数据表
+            lines = [f"子问题 {dep_id} 的结果（{len(result.rows)} 行）："]
+            # 列名
+            lines.append("  " + " | ".join(result.columns))
+            # 数据行（最多 10 行）
+            for row in result.rows[:10]:
+                lines.append("  " + " | ".join(str(v) for v in row))
+            if len(result.rows) > 10:
+                lines.append(f"  ... 共 {len(result.rows)} 行")
+
+            # 第一列值列表（用于 SQL IN 子句提示）
+            first_col_values = [str(row[0]) for row in result.rows if row]
+            lines.append(f"  第一列所有值: {', '.join(first_col_values)}")
+
+            parts.append("\n".join(lines))
+
+        if parts:
+            return "\n\n前序查询结果：\n" + "\n\n".join(parts)
+        return ""
 
     def summarize_all(self) -> str:
         """

@@ -136,10 +136,18 @@ class DataAgent:
         session = self.sessions.get_or_create(session_id, user)
 
         try:
+            # 多轮对话：如果上一轮是澄清追问，将用户回答与原始问题合并
+            question = self._resolve_clarification_followup(question, session, request_id)
+
+            # 工作记忆：获取会话上下文（摘要 + 最近问答 + 查询状态）
+            session_context = session.get_context_for_understanding()
+
             # Router: 先判断是否为复合问题
             from app.core.decomposer import decompose_question
             
-            understand = analyze_intent(question, session.recent_questions(), self.llm, user)
+            understand = analyze_intent(
+                question, session.recent_questions(), self.llm, user, session_context
+            )
             rewritten = understand.rewritten_question or question
 
             # 规则兆底：LLM 分类为 out_of_scope 但问题包含数据库关键词时，强制纠正
@@ -186,6 +194,94 @@ class DataAgent:
             ChatMessage(role="user", content=user_msg),
         ]
         return self.llm.chat(messages, temperature=0.3)
+
+    def _resolve_clarification_followup(
+        self, question: str, session: SessionState, request_id: str
+    ) -> str:
+        """
+        多轮对话上下文合并：如果上一轮是澄清追问，将用户回答与原始问题合并。
+
+        例如：
+        - 上一轮用户问："缺勤过员工的绩效怎么样？"
+        - 系统追问："请问哪个时间段？看哪个指标？"
+        - 用户回答："本月、平均绩效"
+        - 合并为："本月缺勤过员工的平均绩效是多少？"
+        """
+        if not session.turns:
+            return question
+
+        last_turn = session.turns[-1]
+        if last_turn.intent != INTENT_NEED_CLARIFICATION:
+            return question
+
+        # 上一轮是澄清追问，用 LLM 合并原始问题 + 用户回答
+        original_question = last_turn.question
+        merge_prompt = f"""用户之前问了一个问题，系统追问了细节，用户现在回答了追问。
+请将原始问题和用户的回答合并为一个完整、明确的查询问题。
+
+原始问题：{original_question}
+系统追问：{last_turn.answer}
+用户回答：{question}
+
+合并后的完整问题（只输出问题本身，不要其他内容）："""
+
+        messages = [
+            ChatMessage(role="system", content="你是一个问题合并助手。将多轮对话合并为一个完整的查询问题。只输出合并后的问题，不要任何解释。"),
+            ChatMessage(role="user", content=merge_prompt),
+        ]
+        merged = self.llm.chat(messages, temperature=0.0).strip()
+
+        if merged and len(merged) > 5:
+            logger.info(
+                "[%s] Clarification follow-up merged: '%s' + '%s' -> '%s'",
+                request_id, original_question, question, merged,
+            )
+            return merged
+
+        return question
+
+    def _maybe_generate_summary(self, session: SessionState, request_id: str) -> None:
+        """
+        工作记忆：当轮次超过阈值时，生成旧轮对话摘要。
+
+        摘要存入 session.summary，后续理解层会注入此摘要。
+        """
+        if not session.should_summarize():
+            return
+
+        # 取需要摘要的旧轮（保留最近 N 轮不摘要）
+        turns_to_summarize = session.turns[:-session.KEEP_RECENT_TURNS]
+        if not turns_to_summarize:
+            return
+
+        # 构建摘要输入
+        qa_pairs = []
+        for t in turns_to_summarize:
+            qa_pairs.append(f"Q: {t.question}")
+            if t.answer:
+                qa_pairs.append(f"A: {t.answer[:150]}")
+
+        summary_prompt = f"""请将以下对话历史压缩为一段简洁的摘要（不超过 100 字），保留关键信息：
+
+{chr(10).join(qa_pairs)}
+
+摘要（只输出摘要内容，不要其他）："""
+
+        messages = [
+            ChatMessage(
+                role="system",
+                content="你是一个对话摘要助手。将多轮对话压缩为简洁的摘要，保留查询主题、关键实体和时间范围。",
+            ),
+            ChatMessage(role="user", content=summary_prompt),
+        ]
+
+        try:
+            summary = self.llm.chat(messages, temperature=0.0).strip()
+            if summary and len(summary) > 5:
+                session.summary = summary
+                logger.info("[%s] Generated session summary: %s", request_id, summary[:100])
+        except Exception as e:
+            logger.warning("[%s] Failed to generate summary: %s", request_id, e)
 
     def _handle_clarification(
         self,
@@ -323,6 +419,9 @@ class DataAgent:
         )
         session.add_turn(turn)
 
+        # 工作记忆：检查是否需要生成摘要
+        self._maybe_generate_summary(session, request_id)
+
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         self.audit.log(
             request_id=request_id,
@@ -372,6 +471,10 @@ class DataAgent:
             try:
                 # 解析 SQL 为 AST
                 ast = compiler.parse_sql(current_sql)
+
+                # 时间参数规范化（AST 级兜底）
+                from app.sql.param_normalizer import normalize_time_params
+                normalize_time_params(ast)
 
                 # AST 级安全校验
                 errors = self.validator.validate_ast(ast, allowed_tables)
@@ -435,12 +538,19 @@ class DataAgent:
         ctx = ExecutionContext()
 
         for sub_q in decomposition.sub_questions:
+            # 1. 解析占位符（多行结果现在会包含所有值）
             resolved_question = ctx.resolve_placeholders(sub_q.question)
+
+            # 2. 为有依赖的子问题注入前序结果数据
+            dep_context = ctx.get_dependency_context(sub_q)
+            if dep_context:
+                resolved_question = resolved_question + "\n\n" + dep_context
+
             logger.info(
                 "[%s] Executing sub-question %d: %s",
                 request_id,
                 sub_q.id,
-                resolved_question,
+                resolved_question[:200],
             )
 
             sub_result = self._answer_sub_question(
@@ -471,6 +581,9 @@ class DataAgent:
             answer=final_answer,
         )
         session.add_turn(turn)
+
+        # 工作记忆：检查是否需要生成摘要
+        self._maybe_generate_summary(session, request_id)
 
         self.audit.log(
             request_id=request_id,

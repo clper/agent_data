@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 from app.core.llm import ChatMessage, LLMClient
@@ -19,6 +20,31 @@ from app.schema_rag.retriever import RetrievalResult
 from app.schema_rag.metadata import SchemaMetadata
 
 logger = logging.getLogger(__name__)
+
+
+def _get_time_context() -> str:
+    """
+    生成当前时间上下文，注入到 LLM prompt 中。
+
+    让 LLM 理解自然语言时间语义（如"本月"="2026-09"）。
+    """
+    now = datetime.now()
+    last_month = (now.replace(day=1) - timedelta(days=1))
+    quarter = (now.month - 1) // 3 + 1
+    quarter_start = (quarter - 1) * 3 + 1
+
+    return (
+        f"当前时间信息：\n"
+        f"  - 今天：{now.strftime('%Y-%m-%d')}（{'周' + '一二三四五六日'[now.weekday()]}）\n"
+        f"  - 本月：{now.strftime('%Y-%m')}\n"
+        f"  - 上月：{last_month.strftime('%Y-%m')}\n"
+        f"  - 今年：{now.year}\n"
+        f"  - 本季度：{now.year}年Q{quarter}（{now.strftime('%Y')}-{quarter_start:02d} ~ {now.strftime('%Y')}-{now.month:02d}）\n"
+        f"注意：用户说'本月'时请用 '{now.strftime('%Y-%m')}'，"
+        f"说'上月'时请用 '{last_month.strftime('%Y-%m')}'，"
+        f"说'今年'时请用 LIKE '{now.year}-%'，"
+        f"说'本季度'时请用 BETWEEN '{now.year}-{quarter_start:02d}' AND '{now.strftime('%Y-%m')}'"
+    )
 
 GENERATE_SYSTEM = """你是一个企业数据查询助手。根据用户问题和可用的数据库表结构，生成 MySQL 查询。
 
@@ -70,9 +96,13 @@ def generate_sql(
     Returns:
         GenerationResult: 包含 SQL 和解释
     """
+    # 动态注入时间上下文
+    time_context = _get_time_context()
+    system_prompt = GENERATE_SYSTEM + "\n\n" + time_context
+
     user_msg = f"可用表结构：\n{schema_context}\n\n用户问题：{question}"
     messages = [
-        ChatMessage(role="system", content=GENERATE_SYSTEM),
+        ChatMessage(role="system", content=system_prompt),
         ChatMessage(role="user", content=user_msg),
     ]
 

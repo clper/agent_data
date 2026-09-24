@@ -63,7 +63,8 @@ class Table:
         for c in self.columns:
             sens = " [敏感]" if c.sensitive else ""
             enum_str = f" 枚举:{c.enum_values}" if c.enum_values else ""
-            parts.append(f"  - {c.name} ({c.type}): {c.cn}{sens}{enum_str}")
+            comment_str = f" | {c.comment}" if c.comment else ""
+            parts.append(f"  - {c.name} ({c.type}): {c.cn}{sens}{enum_str}{comment_str}")
         return "\n".join(parts)
 
 

@@ -106,7 +106,7 @@ tables:
       - {name: cost_id, type: BIGINT, cn: 记录ID, pk: true, comment: "成本记录唯一编号"}
       - {name: month, type: CHAR(7), cn: 月份, comment: "成本所属月份，格式 YYYY-MM，如 2026-06"}
       - {name: dept_id, type: BIGINT, cn: 部门ID, fk: department.dept_id, comment: "发生成本的部门编号"}
-      - {name: item, type: VARCHAR(64), cn: 成本科目, comment: "成本类别，如人力成本、办公费、差旅费、营销费"}
+      - {name: item, type: VARCHAR(64), cn: 成本科目, enum: [人力, 差旅, 推广, 办公费], comment: "成本类别，当前数据中的实际值为：人力、差旅、推广、办公费。注意：用户说'人力成本'时应匹配'人力'，说'差旅费'时应匹配'差旅'"}
       - {name: amount, type: DECIMAL(14,2), cn: 成本金额, comment: "当月该科目成本金额（元）"}
 
 # ═══════════════════════════════════════════
