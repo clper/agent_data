@@ -82,6 +82,7 @@ def generate_sql(
     schema_context: str,
     metadata: SchemaMetadata,
     llm: LLMClient,
+    memory_context: str = "",
 ) -> GenerationResult:
     """
     让 LLM 直接生成 SQL。
@@ -92,6 +93,7 @@ def generate_sql(
         schema_context: 给 LLM 的 schema 上下文
         metadata: Schema 元数据
         llm: LLM 客户端
+        memory_context: 语义记忆上下文（可选，由 memory.retriever 提供）
 
     Returns:
         GenerationResult: 包含 SQL 和解释
@@ -99,6 +101,10 @@ def generate_sql(
     # 动态注入时间上下文
     time_context = _get_time_context()
     system_prompt = GENERATE_SYSTEM + "\n\n" + time_context
+
+    # 注入语义记忆（如果有的话）
+    if memory_context:
+        system_prompt += "\n\n" + memory_context
 
     user_msg = f"可用表结构：\n{schema_context}\n\n用户问题：{question}"
     messages = [

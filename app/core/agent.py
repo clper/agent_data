@@ -44,6 +44,15 @@ from app.sql.generator import GenerationResult, generate_sql
 from app.sql.repair import attempt_repair
 from app.sql.validator import SecurityValidator
 
+# 语义记忆（可选）
+try:
+    from app.memory.store import SemanticMemoryStore
+    from app.memory.retriever import get_memory_context
+    from app.memory.extractor import extract_from_turn
+    MEMORY_AVAILABLE = True
+except ImportError:
+    MEMORY_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 # 解释层提示词
@@ -106,6 +115,12 @@ class DataAgent:
 
         # 会话存储
         self.sessions = ConversationStore()
+
+        # 语义记忆（可选）
+        self.memory_store: SemanticMemoryStore | None = None
+        if MEMORY_AVAILABLE and settings.memory.enabled:
+            self.memory_store = SemanticMemoryStore(settings.memory.db_path)
+            logger.info("Semantic memory enabled: %s", settings.memory.db_path)
 
         logger.info(
             "DataAgent initialized: %d tables, %d metrics",
@@ -283,6 +298,43 @@ class DataAgent:
         except Exception as e:
             logger.warning("[%s] Failed to generate summary: %s", request_id, e)
 
+    def _maybe_extract_memory(self, turn: Turn, user_id: str) -> None:
+        """语义记忆：从成功查询中提取记忆"""
+        if not self.memory_store:
+            return
+        try:
+            count = extract_from_turn(turn, user_id, self.memory_store)
+            if count:
+                logger.debug("Extracted %d memories for user %s", count, user_id)
+        except Exception as e:
+            logger.warning("Memory extraction failed: %s", e)
+
+    def _maybe_reflect(
+        self, user_id: str, session: SessionState, request_id: str
+    ) -> None:
+        """
+        反思：每 N 轮触发一次回顾，生成洞察并执行衰减/冲突消解。
+        """
+        if not self.memory_store:
+            return
+
+        total_turns = len(session.turns)
+        if total_turns % self.s.memory.reflect_every_n_turns != 0:
+            return
+
+        try:
+            from app.memory.reflector import reflect_and_maintain
+            reflect_and_maintain(
+                user_id=user_id,
+                store=self.memory_store,
+                llm=self.llm,
+                recent_turns=session.turns[-self.s.memory.reflect_every_n_turns:],
+                decay_threshold=self.s.memory.decay_threshold,
+                request_id=request_id,
+            )
+        except Exception as e:
+            logger.warning("[%s] Reflection failed: %s", request_id, e)
+
     def _handle_clarification(
         self,
         question: str,
@@ -385,8 +437,16 @@ class DataAgent:
             )
 
         # 第 4 层：生成层（LLM 直接生成 SQL）
+        # 语义记忆：获取相关记忆注入 prompt
+        memory_ctx = ""
+        if self.memory_store:
+            memory_ctx = get_memory_context(
+                user.user_id, rewritten, self.memory_store
+            )
+
         gen_result = generate_sql(
-            rewritten, retrieval_result, schema_context, self.metadata, self.llm
+            rewritten, retrieval_result, schema_context, self.metadata,
+            self.llm, memory_context=memory_ctx,
         )
 
         if not gen_result.sql:
@@ -421,6 +481,12 @@ class DataAgent:
 
         # 工作记忆：检查是否需要生成摘要
         self._maybe_generate_summary(session, request_id)
+
+        # 语义记忆：从成功查询中提取记忆
+        self._maybe_extract_memory(turn, user.user_id)
+
+        # 反思：定期检查是否需要回顾
+        self._maybe_reflect(user.user_id, session, request_id)
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         self.audit.log(

@@ -67,12 +67,23 @@ class SchemaConfig:
 
 
 @dataclass
+class MemoryConfig:
+    """语义记忆配置"""
+    enabled: bool = os.getenv("MEMORY_ENABLED", "1") == "1"
+    db_path: str = os.getenv("MEMORY_DB_PATH", "data/semantic_memory.db")
+    decay_rate: float = 0.02          # 每天衰减 2%
+    decay_threshold: float = 0.15     # 低于此权重删除
+    reflect_every_n_turns: int = 10   # 每 N 轮触发一次反思
+
+
+@dataclass
 class Settings:
     """聚合所有配置"""
     llm: LLMConfig = field(default_factory=LLMConfig)
     db: DBConfig = field(default_factory=DBConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
     schema: SchemaConfig = field(default_factory=SchemaConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
 
     def validate(self) -> None:
         """启动前校验必填项"""
