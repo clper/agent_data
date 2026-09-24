@@ -31,17 +31,18 @@ from app.core.conversation import ConversationStore
 from app.core.decomposer import DecompositionResult, decompose_question
 from app.core.llm import ChatMessage, LLMClient
 from app.core.merger import merge_results
-from app.models.plan import AgentResponse, ExecResult, QueryPlan
+from app.models.plan import AgentResponse, ExecResult
 from app.models.state import SessionState, Turn, UserContext
 from app.schema_rag.indexer import SchemaIndex
 from app.schema_rag.metadata import SchemaMetadata, load_schema
 from app.schema_rag.retriever import SchemaRetriever
 from app.security.audit import AuditLogger
 from app.security.permissions import PermissionChecker
+from app.sql import compiler
 from app.sql.executor import SQLExecutor
-from app.sql.generator import generate_plan
+from app.sql.generator import GenerationResult, generate_sql
 from app.sql.repair import attempt_repair
-from app.sql.validator import SecurityValidator, validate_and_raise
+from app.sql.validator import SecurityValidator
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +127,7 @@ class DataAgent:
         2. 理解层：意图分类 + 问题改写
         3. 澄清层：追问 / 超范围拒绝
         4. 检索层：Schema RAG → 候选表
-        5. 生成层：LLM → QueryPlan
+        5. 生成层：LLM → SQL → sqlglot AST
         6. 校验层：AST 白名单 + 行列权限
         7. 执行层：只读执行 + 修复循环
         """
@@ -169,192 +170,6 @@ class DataAgent:
                 answer=f"抱歉，处理您的问题时出错：{e}",
                 error=str(e),
             )
-
-    def _answer_chain(
-        self,
-        question: str,
-        session: SessionState,
-        user: UserContext,
-        request_id: str,
-        start_time: float,
-    ) -> AgentResponse:
-        """七层信任链主流程"""
-
-        # ═══════════════════════════════════════════
-        # 第 1 层：理解层（意图分类 + 问题改写）
-        # ═══════════════════════════════════════════
-        understand = analyze_intent(
-            question, session.recent_questions(), self.llm, user
-        )
-        logger.info("[%s] Intent: %s", request_id, understand.intent)
-
-        # ═══════════════════════════════════════════
-        # 第 2 层：澄清层（路由决策）
-        # ═══════════════════════════════════════════
-        if understand.intent == INTENT_NEED_CLARIFICATION:
-            return self._handle_clarification(
-                question, understand, session, user, request_id, start_time
-            )
-
-        if understand.intent == INTENT_OUT_OF_SCOPE:
-            return self._handle_out_of_scope(
-                question, session, user, request_id, start_time
-            )
-
-        if understand.intent == INTENT_META:
-            return self._handle_meta(
-                question, session, user, request_id, start_time
-            )
-
-        # ═══════════════════════════════════════════
-        # 第 2.5 层：Router（简单问题 vs 复合问题）
-        # ═══════════════════════════════════════════
-        rewritten = understand.rewritten_question or question
-        decomposition = decompose_question(rewritten, self.llm)
-
-        if decomposition.is_composite:
-            logger.info(
-                "[%s] Complex question detected, entering Decompose-Merge flow (%d sub-questions)",
-                request_id,
-                len(decomposition.sub_questions),
-            )
-            return self._answer_composite(
-                question, rewritten, decomposition, session, user, request_id, start_time
-            )
-
-        # 简单问题：走原有单轮流程
-        logger.info("[%s] Simple question, entering single-turn flow", request_id)
-        return self._answer_simple(
-            question, rewritten, session, user, request_id, start_time
-        )
-
-        # ═══════════════════════════════════════════
-        # 第 3 层：检索层（Schema RAG）
-        # ═══════════════════════════════════════════
-        rewritten = understand.rewritten_question or question
-        retrieval_result = self.retriever.retrieve(rewritten)
-        schema_context = self.retriever.get_context_for_llm(retrieval_result)
-        logger.info(
-            "[%s] Retrieved tables: %s (expanded: %s)",
-            request_id, retrieval_result.table_names, retrieval_result.expanded_tables,
-        )
-
-        if not retrieval_result.table_names:
-            return AgentResponse(
-                answer="抱歉，没有找到与您问题相关的数据库表。请尝试换一种描述方式。",
-            )
-
-        # ═══════════════════════════════════════════
-        # 第 4 层：生成层（LLM → QueryPlan）
-        # ═══════════════════════════════════════════
-        plan = generate_plan(
-            rewritten, retrieval_result, schema_context, self.metadata, self.llm
-        )
-        logger.info("[%s] Plan: tables=%s, cols=%s", request_id, plan.target_tables, plan.select_columns)
-
-        if plan.intent != INTENT_DATA_QUERY:
-            # 模型判断为非数据查询，降级处理
-            if plan.intent == INTENT_OUT_OF_SCOPE:
-                return self._handle_out_of_scope(
-                    question, session, user, request_id, start_time
-                )
-
-        # ═══════════════════════════════════════════
-        # 第 5 层：校验层（AST 白名单 + 行列权限）
-        # ═══════════════════════════════════════════
-        # 行级权限先注入（为列级权限提供"自身查询"上下文）
-        plan = self.perm_checker.apply_row_permissions(plan, user)
-        # 列级权限（依赖行级注入结果判断 salary 可见性）
-        plan = self.perm_checker.apply_column_permissions(plan, user)
-
-        # 编译 SQL
-        sql, params = plan.to_sql()
-        logger.info("[%s] SQL: %s | params: %s", request_id, sql, params)
-
-        # AST 校验
-        allowed_tables = set(retrieval_result.table_names)
-        validate_and_raise(self.validator, plan, sql, allowed_tables)
-
-        # ═══════════════════════════════════════════
-        # 第 6 层：执行层（只读执行 + 修复循环）
-        # ═══════════════════════════════════════════
-        exec_result = None
-        last_error = None
-
-        for round_idx in range(self.s.security.max_repair_rounds + 1):
-            try:
-                exec_result = self.executor.execute(sql, params)
-                last_error = None
-                break  # 成功，跳出循环
-            except PermissionError:
-                raise  # 安全错误不修复
-            except Exception as e:
-                last_error = str(e)
-                logger.warning("[%s] Execution failed (round %d): %s", request_id, round_idx, e)
-
-                if round_idx < self.s.security.max_repair_rounds:
-                    # 尝试修复
-                    repaired = attempt_repair(
-                        plan, str(e), schema_context, rewritten, self.metadata, self.llm
-                    )
-                    if repaired:
-                        plan = repaired
-                        # 重新应用权限（行级先于列级）
-                        plan = self.perm_checker.apply_row_permissions(plan, user)
-                        plan = self.perm_checker.apply_column_permissions(plan, user)
-                        sql, params = plan.to_sql()
-                        # 重新校验
-                        validate_and_raise(self.validator, plan, sql, allowed_tables)
-                    else:
-                        break
-
-        if exec_result is None:
-            return AgentResponse(
-                answer=f"抱歉，查询执行失败：{last_error}",
-                error=last_error,
-            )
-
-        # ═══════════════════════════════════════════
-        # 第 7 层：解释层（LLM 把数据翻译为中文回答）
-        # ═══════════════════════════════════════════
-        answer_text = self._explain(rewritten, exec_result, schema_context)
-
-        # 记录会话
-        turn = Turn(
-            question=question,
-            rewritten_question=rewritten,
-            intent=understand.intent,
-            sql_executed=exec_result.sql,
-            answer=answer_text,
-            tables_used=plan.target_tables,
-        )
-        session.add_turn(turn)
-
-        # 审计日志
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        self.audit.log(
-            request_id=request_id,
-            user_id=user.user_id,
-            role=user.role,
-            session_id=session.session_id,
-            question=question,
-            rewritten_question=rewritten,
-            generated_sql=exec_result.sql,
-            candidate_tables=retrieval_result.table_names,
-            tables_accessed=plan.target_tables,
-            columns_accessed=plan.select_columns,
-            answer=answer_text,
-            row_count=exec_result.row_count,
-            execution_ms=elapsed_ms,
-        )
-
-        return AgentResponse(
-            answer=answer_text,
-            sql=exec_result.sql,
-            tables_used=plan.target_tables,
-            row_count=exec_result.row_count,
-            execution_time_ms=elapsed_ms,
-        )
 
     def _explain(
         self, question: str, result: ExecResult, schema_context: str
@@ -442,9 +257,8 @@ class DataAgent:
         """
         简单问题流程（复用 Router 层的 understand 结果，避免重复调用 LLM）。
         
-        与 _answer_chain 的唯一区别：跳过理解层，直接使用传入的 understand。
+        新管线：LLM → SQL → sqlglot AST → 校验 → 权限注入 → 参数化 → 执行
         """
-        # 从第 2 层（澄清层）开始执行
         if understand.intent == INTENT_NEED_CLARIFICATION:
             return self._handle_clarification(
                 question, understand, session, user, request_id, start_time
@@ -460,7 +274,7 @@ class DataAgent:
                 question, session, user, request_id, start_time
             )
 
-        # 第 3 层及以后：走正常流程
+        # 第 3 层：检索层（Schema RAG）
         rewritten = understand.rewritten_question or question
         retrieval_result = self.retriever.retrieve(rewritten)
         schema_context = self.retriever.get_context_for_llm(retrieval_result)
@@ -474,58 +288,26 @@ class DataAgent:
                 answer="抱歉，没有找到与您问题相关的数据库表。请尝试换一种描述方式。",
             )
 
-        # 第 4 层：生成层
-        plan = generate_plan(
+        # 第 4 层：生成层（LLM 直接生成 SQL）
+        gen_result = generate_sql(
             rewritten, retrieval_result, schema_context, self.metadata, self.llm
         )
-        logger.info("[%s] Plan: tables=%s, cols=%s", request_id, plan.target_tables, plan.select_columns)
 
-        # 注意：不再用 plan.intent 覆盖 Router 的意图分类
-        # Router 已确认为 data_query，即使 generate_plan 的 LLM 返回 out_of_scope 也继续执行
-        # 这避免了两次 LLM 调用意图不一致的问题
+        if not gen_result.sql:
+            return self._handle_out_of_scope(
+                question, session, user, request_id, start_time
+            )
 
-        # 第 5 层：校验层（行级先于列级）
-        plan = self.perm_checker.apply_row_permissions(plan, user)
-        plan = self.perm_checker.apply_column_permissions(plan, user)
-
-        sql, params = plan.to_sql()
-        logger.info("[%s] SQL: %s | params: %s", request_id, sql, params)
-
+        # 第 5-6 层：校验 + 权限 + 执行（含修复循环）
         allowed_tables = set(retrieval_result.table_names)
-        validate_and_raise(self.validator, plan, sql, allowed_tables)
-
-        # 第 6 层：执行层
-        exec_result = None
-        last_error = None
-
-        for round_idx in range(self.s.security.max_repair_rounds + 1):
-            try:
-                exec_result = self.executor.execute(sql, params)
-                last_error = None
-                break
-            except PermissionError:
-                raise
-            except Exception as e:
-                last_error = str(e)
-                logger.warning("[%s] Execution failed (round %d): %s", request_id, round_idx, e)
-
-                if round_idx < self.s.security.max_repair_rounds:
-                    repaired = attempt_repair(
-                        plan, str(e), schema_context, rewritten, self.metadata, self.llm
-                    )
-                    if repaired:
-                        plan = repaired
-                        plan = self.perm_checker.apply_row_permissions(plan, user)
-                        plan = self.perm_checker.apply_column_permissions(plan, user)
-                        sql, params = plan.to_sql()
-                        validate_and_raise(self.validator, plan, sql, allowed_tables)
-                    else:
-                        break
+        exec_result, final_sql, tables_used, columns_used = self._validate_and_execute(
+            gen_result.sql, allowed_tables, user, rewritten, schema_context, request_id
+        )
 
         if exec_result is None:
             return AgentResponse(
-                answer=f"抱歉，查询执行失败：{last_error}",
-                error=last_error,
+                answer="抱歉，查询执行失败，请稍后重试。",
+                error="execution_failed",
             )
 
         # 第 7 层：解释层
@@ -535,9 +317,9 @@ class DataAgent:
             question=question,
             rewritten_question=rewritten,
             intent=understand.intent,
-            sql_executed=exec_result.sql,
+            sql_executed=final_sql,
             answer=answer_text,
-            tables_used=plan.target_tables,
+            tables_used=tables_used,
         )
         session.add_turn(turn)
 
@@ -549,10 +331,10 @@ class DataAgent:
             session_id=session.session_id,
             question=question,
             rewritten_question=rewritten,
-            generated_sql=exec_result.sql,
+            generated_sql=final_sql,
             candidate_tables=retrieval_result.table_names,
-            tables_accessed=plan.target_tables,
-            columns_accessed=plan.select_columns,
+            tables_accessed=tables_used,
+            columns_accessed=columns_used,
             answer=answer_text,
             row_count=exec_result.row_count,
             execution_ms=elapsed_ms,
@@ -560,11 +342,80 @@ class DataAgent:
 
         return AgentResponse(
             answer=answer_text,
-            sql=exec_result.sql,
-            tables_used=plan.target_tables,
+            sql=final_sql,
+            tables_used=tables_used,
             row_count=exec_result.row_count,
             execution_time_ms=elapsed_ms,
         )
+
+    def _validate_and_execute(
+        self,
+        sql: str,
+        allowed_tables: set[str],
+        user: UserContext,
+        question: str,
+        schema_context: str,
+        request_id: str,
+    ) -> tuple[ExecResult | None, str, list[str], list[str]]:
+        """
+        校验 + 权限注入 + 执行（含修复循环）。
+
+        返回: (exec_result, final_sql, tables_used, columns_used)
+        """
+        exec_result = None
+        last_error = None
+        current_sql = sql
+        tables_used: list[str] = []
+        columns_used: list[str] = []
+
+        for round_idx in range(self.s.security.max_repair_rounds + 1):
+            try:
+                # 解析 SQL 为 AST
+                ast = compiler.parse_sql(current_sql)
+
+                # AST 级安全校验
+                errors = self.validator.validate_ast(ast, allowed_tables)
+                if errors:
+                    msg = "; ".join(e.message for e in errors)
+                    raise PermissionError(f"SQL 校验失败: {msg}")
+
+                # 行级权限先注入（AST 级）
+                ast = self.perm_checker.apply_row_permissions(ast, user)
+                # 列级权限（AST 级，依赖行级注入结果判断 salary 可见性）
+                ast = self.perm_checker.apply_column_permissions(ast, user, current_sql)
+
+                # 提取参数化 SQL（从原始 SQL 提取字面量值）
+                final_sql, final_params = compiler.extract_params(ast, current_sql)
+                tables_used = compiler.extract_tables(ast)
+                columns_used = compiler.extract_columns(ast)
+
+                logger.info("[%s] SQL: %s | params: %s", request_id, final_sql[:200], final_params)
+
+                # 执行
+                exec_result = self.executor.execute(final_sql, final_params)
+                last_error = None
+                current_sql = final_sql
+                break
+
+            except PermissionError:
+                raise  # 安全错误不修复
+            except Exception as e:
+                last_error = str(e)
+                logger.warning("[%s] Failed (round %d): %s", request_id, round_idx, e)
+
+                if round_idx < self.s.security.max_repair_rounds:
+                    repaired = attempt_repair(
+                        current_sql, str(e), schema_context, question,
+                        self.metadata, self.llm,
+                    )
+                    if repaired and repaired.sql:
+                        current_sql = repaired.sql
+                    else:
+                        break
+                else:
+                    break
+
+        return exec_result, current_sql, tables_used, columns_used
 
     def _answer_composite(
         self,
@@ -650,7 +501,7 @@ class DataAgent:
         request_id: str,
         sub_id: int,
     ) -> "SubResult":
-        """执行单个子问题"""
+        """执行单个子问题（新管线：LLM → SQL → AST → 权限 → 执行）"""
         from app.core.context import SubResult
 
         try:
@@ -665,19 +516,31 @@ class DataAgent:
                     error="No relevant tables found",
                 )
 
-            plan = generate_plan(
+            # LLM 直接生成 SQL
+            gen_result = generate_sql(
                 question, retrieval_result, schema_context, self.metadata, self.llm
             )
+            if not gen_result.sql:
+                return SubResult(
+                    id=sub_id,
+                    question=question,
+                    answer="抱歉，无法生成查询。",
+                    error="Empty SQL",
+                )
 
-            plan = self.perm_checker.apply_row_permissions(plan, user)
-            plan = self.perm_checker.apply_column_permissions(plan, user)
-
-            sql, params = plan.to_sql()
-
+            # 校验 + 权限 + 执行
             allowed_tables = set(retrieval_result.table_names)
-            validate_and_raise(self.validator, plan, sql, allowed_tables)
+            exec_result, final_sql, _, _ = self._validate_and_execute(
+                gen_result.sql, allowed_tables, user, question, schema_context, request_id
+            )
 
-            exec_result = self.executor.execute(sql, params)
+            if exec_result is None:
+                return SubResult(
+                    id=sub_id,
+                    question=question,
+                    answer="查询执行失败。",
+                    error="execution_failed",
+                )
 
             answer_text = self._explain(question, exec_result, schema_context)
 

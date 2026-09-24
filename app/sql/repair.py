@@ -1,10 +1,10 @@
 """
-修复循环：SQL 执行失败时，让模型修复并重试。
+修复循环：SQL 执行失败时，让 LLM 直接修复 SQL 并重试。
 
 设计要点：
 - 最多修复 N 轮（默认 2 轮）
 - PermissionError 不修复（安全错误不可修复）
-- 修复时把错误信息 + 原 SQL 给模型，让它生成新的 QueryPlan
+- LLM 直接修复 SQL 字符串，不再经过 QueryPlan 中转
 - 修复后重新走校验链
 """
 from __future__ import annotations
@@ -13,34 +13,36 @@ import logging
 from typing import Any
 
 from app.core.llm import ChatMessage, LLMClient
-from app.models.plan import QueryPlan
+from app.sql.generator import GenerationResult
 from app.schema_rag.metadata import SchemaMetadata
 
 logger = logging.getLogger(__name__)
 
-REPAIR_SYSTEM = """你是一个 SQL 修复专家。之前的查询执行失败了，请根据错误信息修复查询计划。
+REPAIR_SYSTEM = """你是一个 SQL 修复专家。之前的查询执行失败了，请根据错误信息修复 SQL。
 
 规则：
 1. 只修复导致错误的部分，不要改变查询的语义
-2. 保持 JSON 格式不变
-3. 如果无法修复，返回原计划并说明原因
+2. WHERE 条件中的值直接写入 SQL（系统会自动参数化）
+3. 只生成 SELECT 语句
+4. 如果无法修复，返回空 SQL
 
-输出 JSON 格式与原查询计划相同。"""
+输出 JSON：
+{"sql": "修复后的 SQL", "explanation": "修复说明"}"""
 
 
 def attempt_repair(
-    original_plan: QueryPlan,
+    original_sql: str,
     error_message: str,
     schema_context: str,
     question: str,
     metadata: SchemaMetadata,
     llm: LLMClient,
-) -> QueryPlan | None:
+) -> GenerationResult | None:
     """
-    尝试修复失败的查询计划。
+    尝试修复失败的 SQL。
 
     Args:
-        original_plan: 原始查询计划
+        original_sql: 原始 SQL
         error_message: 执行错误信息
         schema_context: Schema 上下文
         question: 用户问题
@@ -48,31 +50,14 @@ def attempt_repair(
         llm: LLM 客户端
 
     Returns:
-        修复后的 QueryPlan，如果无法修复返回 None
+        修复后的 GenerationResult，如果无法修复返回 None
     """
-    import json
-
-    original_dict = {
-        "intent": original_plan.intent,
-        "target_tables": original_plan.target_tables,
-        "select_columns": original_plan.select_columns,
-        "where_conditions": original_plan.where_conditions,
-        "where_params": original_plan.where_params,
-        "joins": [
-            {"table": j.table, "on_condition": j.on_condition, "join_type": j.join_type}
-            for j in original_plan.joins
-        ],
-        "group_by": original_plan.group_by,
-        "order_by": original_plan.order_by,
-        "limit": original_plan.limit,
-    }
-
     user_msg = (
         f"可用表结构：\n{schema_context}\n\n"
         f"用户问题：{question}\n\n"
-        f"原查询计划：\n{json.dumps(original_dict, ensure_ascii=False, indent=2)}\n\n"
+        f"原 SQL：\n{original_sql}\n\n"
         f"执行错误：{error_message}\n\n"
-        f"请修复查询计划。"
+        f"请修复 SQL。"
     )
 
     messages = [
@@ -82,16 +67,12 @@ def attempt_repair(
 
     result_dict = llm.chat_json(messages, temperature=0.0)
 
-    if "error" in result_dict:
-        logger.warning("Repair failed: LLM returned error")
+    sql = result_dict.get("sql", "").strip()
+    explanation = result_dict.get("explanation", "")
+
+    if not sql:
+        logger.warning("Repair failed: LLM returned empty SQL")
         return None
 
-    # 解析修复后的计划
-    from app.sql.generator import _parse_plan
-    from app.schema_rag.retriever import RetrievalResult
-
-    # 构造一个包含所有表的 retrieval result（修复时不做表限制）
-    all_tables = metadata.get_all_table_names()
-    retrieval_result = RetrievalResult(table_names=all_tables, scores={})
-
-    return _parse_plan(result_dict, metadata, retrieval_result)
+    logger.info("Repair SQL: %s", sql[:200])
+    return GenerationResult(sql=sql, explanation=explanation)

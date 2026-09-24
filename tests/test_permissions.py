@@ -1,5 +1,5 @@
 """
-权限控制测试：验证列级隐藏 + 行级注入。
+权限控制测试：验证 AST 级列过滤 + 行级注入。
 
 测试策略：
 - 各角色的敏感列过滤
@@ -8,10 +8,10 @@
 """
 import pytest
 
-from app.models.plan import QueryPlan
 from app.models.state import UserContext
 from app.schema_rag.metadata import Column, SchemaMetadata, Table
 from app.security.permissions import PermissionChecker
+from app.sql import compiler
 
 
 @pytest.fixture
@@ -53,79 +53,58 @@ def checker(metadata):
 # ═══════════════════════════════════════════
 
 class TestColumnPermissions:
-    """列级权限测试"""
+    """列级权限测试（AST 级）"""
 
     def test_employee_cannot_see_salary(self, checker):
         """普通员工不能看 salary"""
         user = UserContext(user_id="101", role="employee")
-        plan = QueryPlan(
-            intent="data_query",
-            target_tables=["employee"],
-            select_columns=["name", "salary"],
-            where_conditions=[],
-            where_params=[],
-        )
-        result = checker.apply_column_permissions(plan, user)
-        assert "salary" not in result.select_columns
-        assert "name" in result.select_columns
+        ast = compiler.parse_sql("SELECT name, salary FROM employee")
+        ast = checker.apply_column_permissions(ast, user)
+        sql = compiler.ast_to_sql(ast)
+        assert "salary" not in sql.lower()
+        assert "name" in sql.lower()
 
     def test_employee_cannot_see_id_card(self, checker):
         """普通员工不能看 id_card"""
         user = UserContext(user_id="101", role="employee")
-        plan = QueryPlan(
-            intent="data_query",
-            target_tables=["employee"],
-            select_columns=["name", "id_card"],
-            where_conditions=[],
-            where_params=[],
-        )
-        result = checker.apply_column_permissions(plan, user)
-        assert "id_card" not in result.select_columns
+        ast = compiler.parse_sql("SELECT name, id_card FROM employee")
+        ast = checker.apply_column_permissions(ast, user)
+        sql = compiler.ast_to_sql(ast)
+        assert "id_card" not in sql.lower()
 
     def test_employee_cannot_see_bonus(self, checker):
         """普通员工不能看 bonus"""
         user = UserContext(user_id="101", role="employee")
-        plan = QueryPlan(
-            intent="data_query",
-            target_tables=["performance"],
-            select_columns=["score", "bonus"],
-            where_conditions=[],
-            where_params=[],
-        )
-        result = checker.apply_column_permissions(plan, user)
-        assert "bonus" not in result.select_columns
-        assert "score" in result.select_columns
+        ast = compiler.parse_sql("SELECT score, bonus FROM performance")
+        ast = checker.apply_column_permissions(ast, user)
+        sql = compiler.ast_to_sql(ast)
+        assert "bonus" not in sql.lower()
+        assert "score" in sql.lower()
 
-    def test_exec_can_see_all(self, checker):
-        """高管可以看所有列"""
+    def test_exec_can_see_all_except_id_card(self, checker):
+        """高管可以看所有列，但 id_card 是全局隐藏的"""
         user = UserContext(user_id="admin", role="exec")
-        plan = QueryPlan(
-            intent="data_query",
-            target_tables=["employee"],
-            select_columns=["name", "salary", "id_card"],
-            where_conditions=[],
-            where_params=[],
-        )
-        result = checker.apply_column_permissions(plan, user)
-        assert len(result.select_columns) == 3
+        ast = compiler.parse_sql("SELECT name, salary, id_card FROM employee")
+        ast = checker.apply_column_permissions(ast, user)
+        cols = compiler.extract_columns(ast)
+        # id_card 是全局隐藏列，任何角色都不可看
+        assert len(cols) == 2
+        sql = compiler.ast_to_sql(ast)
+        assert "id_card" not in sql.lower()
+        assert "salary" in sql.lower()
 
     def test_select_star_expansion(self, checker):
         """SELECT * 展开为可见列"""
         user = UserContext(user_id="101", role="employee")
-        plan = QueryPlan(
-            intent="data_query",
-            target_tables=["employee"],
-            select_columns=["*"],
-            where_conditions=[],
-            where_params=[],
-        )
-        result = checker.apply_column_permissions(plan, user)
-        # employee 表有 emp_id, name, dept_id, salary, id_card
+        ast = compiler.parse_sql("SELECT * FROM employee")
+        ast = checker.apply_column_permissions(ast, user)
+        sql = compiler.ast_to_sql(ast)
         # employee 角色隐藏 salary, id_card
+        assert "salary" not in sql.lower()
+        assert "id_card" not in sql.lower()
         # 展开后应只有 emp_id, name, dept_id
-        assert "salary" not in " ".join(result.select_columns)
-        assert "id_card" not in " ".join(result.select_columns)
-        assert len(result.select_columns) == 3  # emp_id, name, dept_id
+        cols = compiler.extract_columns(ast)
+        assert len(cols) == 3
 
 
 # ═══════════════════════════════════════════
@@ -133,46 +112,29 @@ class TestColumnPermissions:
 # ═══════════════════════════════════════════
 
 class TestRowPermissions:
-    """行级权限测试"""
+    """行级权限测试（AST 级）"""
 
     def test_employee_row_predicate(self, checker):
-        """普通员工：注入 emp_id = %s"""
+        """普通员工：注入 emp_id 条件"""
         user = UserContext(user_id="101", role="employee")
-        plan = QueryPlan(
-            intent="data_query",
-            target_tables=["employee"],
-            select_columns=["name"],
-            where_conditions=[],
-            where_params=[],
-        )
-        result = checker.apply_row_permissions(plan, user)
-        assert len(result.where_conditions) == 1
-        assert "emp_id = %s" in result.where_conditions[0]
-        assert "101" in result.where_params  # user_id 是字符串
+        ast = compiler.parse_sql("SELECT name FROM employee")
+        ast = checker.apply_row_permissions(ast, user)
+        sql = compiler.ast_to_sql(ast)
+        assert "emp_id" in sql.lower()
+        assert "101" in sql  # 实际值被注入
 
     def test_exec_no_row_predicate(self, checker):
         """高管：不注入行级谓词"""
         user = UserContext(user_id="admin", role="exec")
-        plan = QueryPlan(
-            intent="data_query",
-            target_tables=["employee"],
-            select_columns=["name"],
-            where_conditions=[],
-            where_params=[],
-        )
-        result = checker.apply_row_permissions(plan, user)
-        assert len(result.where_conditions) == 0
+        ast = compiler.parse_sql("SELECT name FROM employee")
+        ast = checker.apply_row_permissions(ast, user)
+        sql = compiler.ast_to_sql(ast)
+        assert "emp_id" not in sql.lower()
 
     def test_dept_lead_row_predicate(self, checker):
-        """部门主管：注入 dept_id = %s"""
+        """部门主管：注入 dept_id 条件"""
         user = UserContext(user_id="lead1", role="dept_lead", department_id=1)
-        plan = QueryPlan(
-            intent="data_query",
-            target_tables=["employee"],
-            select_columns=["name"],
-            where_conditions=[],
-            where_params=[],
-        )
-        result = checker.apply_row_permissions(plan, user)
-        assert len(result.where_conditions) == 1
-        assert "dept_id = %s" in result.where_conditions[0]
+        ast = compiler.parse_sql("SELECT name FROM employee")
+        ast = checker.apply_row_permissions(ast, user)
+        sql = compiler.ast_to_sql(ast)
+        assert "dept_id" in sql.lower()

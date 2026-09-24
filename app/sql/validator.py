@@ -1,16 +1,15 @@
 """
-AST 白名单校验器：用 sqlglot 解析 SQL，检查是否符合安全规则。
+AST 白名单校验器：用 sqlglot 解析后的 AST 进行安全校验。
 
 这是整个安全链路的核心——即使 LLM 被注入，这一层也能拦住危险操作。
 
 校验规则：
 1. 只允许 SELECT（禁止 INSERT/UPDATE/DELETE/DROP/ALTER 等）
-2. 禁止子查询中的危险函数（SLEEP、BENCHMARK、LOAD_FILE 等）
-3. 禁止 INTO OUTFILE / INTO DUMPFILE
-4. 禁止多语句（; 分隔的多个 SQL）
-5. 目标表必须在白名单中
-6. 禁止 FOR UPDATE / LOCK IN SHARE MODE
-7. 列名必须在 schema 白名单中（防止注入）
+2. 禁止危险函数（SLEEP、BENCHMARK、LOAD_FILE 等）
+3. 禁止危险表达式（INTO OUTFILE、FOR UPDATE 等）
+4. 目标表必须在白名单中
+5. 禁止多语句（; 分隔的多个 SQL）
+6. 列名必须在 schema 白名单中（防止幻觉列）
 """
 from __future__ import annotations
 
@@ -22,7 +21,6 @@ from typing import Any
 import sqlglot
 from sqlglot import exp
 
-from app.models.plan import QueryPlan
 from app.schema_rag.metadata import SchemaMetadata
 
 logger = logging.getLogger(__name__)
@@ -38,9 +36,6 @@ FORBIDDEN_EXPRESSIONS = {
     exp.Into,           # INTO OUTFILE / DUMPFILE
     exp.Lock,           # FOR UPDATE / LOCK IN SHARE MODE
 }
-
-# 允许的语句类型
-ALLOWED_STATEMENTS = {exp.Select}
 
 
 @dataclass
@@ -59,171 +54,166 @@ class SecurityValidator:
     - 第一道：AST 结构检查（只允许 SELECT）
     - 第二道：函数黑名单检查
     - 第三道：表白名单检查
-    - 第四道：列白名单检查（结合权限层）
+    - 第四道：列白名单检查（结合 schema）
     """
 
     def __init__(self, metadata: SchemaMetadata):
         self.metadata = metadata
 
-    def validate_plan(self, plan: QueryPlan) -> list[ValidationError]:
+    def validate_ast(
+        self,
+        ast: exp.Select,
+        allowed_tables: set[str],
+    ) -> list[ValidationError]:
         """
-        校验查询计划（在编译为 SQL 之前）。
+        AST 级安全校验。
 
-        检查：
-        - 目标表是否在 schema 中
-        - SELECT 列是否合法
+        Args:
+            ast: sqlglot 解析后的 AST
+            allowed_tables: 允许的表名集合（来自 Schema RAG 检索结果）
+
+        Returns:
+            校验错误列表（空列表表示通过）
         """
         errors: list[ValidationError] = []
 
-        # 检查目标表
-        for table_name in plan.target_tables:
-            if not self.metadata.get_table(table_name):
+        # 1. 检查危险函数
+        for func in ast.find_all(exp.Func):
+            func_name = func.name.upper() if hasattr(func, "name") else ""
+            if func_name in DANGEROUS_FUNCTIONS:
                 errors.append(ValidationError(
-                    code="unknown_table",
-                    message=f"表 {table_name} 不在 schema 中",
+                    code="dangerous_function",
+                    message=f"禁止的函数: {func_name}",
                 ))
 
-        # 检查 SELECT 列（防止注入）
-        for col_expr in plan.select_columns:
-            if self._contains_injection(col_expr):
+        # 2. 检查禁止的表达式（INTO、LOCK 等）
+        for expr_type in FORBIDDEN_EXPRESSIONS:
+            for found in ast.find_all(expr_type):
                 errors.append(ValidationError(
-                    code="column_injection",
-                    message=f"SELECT 列包含可疑内容: {col_expr}",
+                    code="forbidden_expression",
+                    message=f"禁止的表达式: {type(found).__name__}",
                 ))
 
-        # 检查 WHERE 条件（防止注入）
-        for cond in plan.where_conditions:
-            if self._contains_injection(cond):
+        # 3. 检查表白名单
+        for table in ast.find_all(exp.Table):
+            table_name = table.name.lower()
+            if table_name and table_name not in allowed_tables:
                 errors.append(ValidationError(
-                    code="condition_injection",
-                    message=f"WHERE 条件包含可疑内容: {cond}",
+                    code="table_not_allowed",
+                    message=f"表 {table_name} 不在允许列表中",
                 ))
+
+        # 4. 检查列白名单（宽松模式：只检查已知表中的列）
+        errors.extend(self._validate_columns(ast))
+
+        return errors
+
+    def _validate_columns(self, ast: exp.Select) -> list[ValidationError]:
+        """
+        列白名单校验。
+
+        策略：对于能确定所属表的列引用，检查列是否存在于 schema 中。
+        对于无法确定所属表的（如聚合函数参数、别名引用），跳过检查。
+        """
+        errors: list[ValidationError] = []
+
+        # 构建别名 → 表名映射
+        alias_map: dict[str, str] = {}
+        for table in ast.find_all(exp.Table):
+            table_name = table.name.lower()
+            alias_expr = table.args.get("alias")
+            if alias_expr and hasattr(alias_expr, "name"):
+                alias_map[alias_expr.name.lower()] = table_name
+            alias_map[table_name] = table_name
+
+        # 检查列引用
+        checked: set[str] = set()
+        for col in ast.find_all(exp.Column):
+            col_name = col.name.lower()
+            if col_name == "*":
+                continue
+
+            table_part = col.table
+            if table_part:
+                real_table = alias_map.get(table_part.lower(), table_part.lower())
+                table_meta = self.metadata.get_table(real_table)
+                if table_meta:
+                    key = f"{real_table}.{col_name}"
+                    if key not in checked:
+                        checked.add(key)
+                        if col_name not in table_meta.all_column_names:
+                            errors.append(ValidationError(
+                                code="unknown_column",
+                                message=f"列 {col_name} 不存在于表 {real_table} 中",
+                            ))
+
+        return errors
+
+    def validate_sql_string(self, sql: str, allowed_tables: set[str]) -> list[ValidationError]:
+        """
+        校验 SQL 字符串（用于多语句检测等 AST 解析前的检查）。
+        """
+        errors: list[ValidationError] = []
+
+        # 检查多语句
+        if _has_multiple_statements(sql):
+            errors.append(ValidationError(
+                code="multiple_statements",
+                message="禁止多语句执行",
+            ))
 
         return errors
 
     def validate_sql(self, sql: str, allowed_tables: set[str]) -> list[ValidationError]:
         """
-        校验最终编译的 SQL 字符串（AST 级别）。
+        完整校验链：先检查 SQL 字符串，再解析 AST 并校验。
 
-        这是最后的安全防线——即使前面所有层都失败了，这里也能拦住。
+        兼容旧接口，供测试和外部调用。
         """
-        errors: list[ValidationError] = []
+        errors = self.validate_sql_string(sql, allowed_tables)
+        if errors:
+            return errors
 
-        # 1. 检查多语句
-        if self._has_multiple_statements(sql):
-            errors.append(ValidationError(
-                code="multiple_statements",
-                message="禁止多语句执行",
-            ))
-            return errors  # 多语句直接拒绝，不再解析
-
-        # 2. 解析 AST（先将 %s 替换为 ? 以便 sqlglot 解析）
-        sanitized_sql = sql.replace("%s", "?")
+        # 解析 SQL 为 AST
+        cleaned = sql.replace("%s", "?")
         try:
-            parsed = sqlglot.parse(sanitized_sql)
+            parsed = sqlglot.parse(cleaned, read="mysql")
         except Exception as e:
-            errors.append(ValidationError(
-                code="parse_error",
-                message=f"SQL 解析失败: {e}",
-            ))
-            return errors
+            return [ValidationError(code="parse_error", message=f"SQL 解析失败: {e}")]
 
-        if not parsed:
-            errors.append(ValidationError(
-                code="empty_sql",
-                message="SQL 为空",
-            ))
-            return errors
+        if not parsed or not parsed[0]:
+            return [ValidationError(code="empty_sql", message="SQL 为空")]
 
-        # 3. 只允许 SELECT
-        for stmt in parsed:
-            if not isinstance(stmt, tuple(ALLOWED_STATEMENTS)):
-                errors.append(ValidationError(
-                    code="forbidden_statement",
-                    message=f"禁止的语句类型: {type(stmt).__name__}",
-                ))
-                return errors
+        stmt = parsed[0]
+        if not isinstance(stmt, exp.Select):
+            return [ValidationError(
+                code="forbidden_statement",
+                message=f"禁止的语句类型: {type(stmt).__name__}",
+            )]
 
-        # 4. 检查危险函数
-        for stmt in parsed:
-            for func in stmt.find_all(exp.Func):
-                func_name = func.name.upper() if hasattr(func, "name") else ""
-                if func_name in DANGEROUS_FUNCTIONS:
-                    errors.append(ValidationError(
-                        code="dangerous_function",
-                        message=f"禁止的函数: {func_name}",
-                    ))
+        return self.validate_ast(stmt, allowed_tables)
 
-        # 5. 检查禁止的表达式（INTO、LOCK 等）
-        for stmt in parsed:
-            for expr_type in FORBIDDEN_EXPRESSIONS:
-                for found in stmt.find_all(expr_type):
-                    errors.append(ValidationError(
-                        code="forbidden_expression",
-                        message=f"禁止的表达式: {type(found).__name__}",
-                    ))
 
-        # 6. 检查表白名单
-        for stmt in parsed:
-            for table in stmt.find_all(exp.Table):
-                table_name = table.name.lower()
-                if table_name and table_name not in allowed_tables:
-                    errors.append(ValidationError(
-                        code="table_not_allowed",
-                        message=f"表 {table_name} 不在允许列表中",
-                    ))
-
-        return errors
-
-    def _has_multiple_statements(self, sql: str) -> bool:
-        """检查是否包含多条语句（用 ; 分隔）"""
-        # 去除字符串字面量中的 ;
-        cleaned = re.sub(r"'[^']*'", "", sql)
-        return ";" in cleaned.strip()
-
-    def _contains_injection(self, text: str) -> bool:
-        """
-        检查文本是否包含 SQL 注入特征。
-
-        这是启发式检查，AST 校验是更可靠的后盾。
-        """
-        suspicious_patterns = [
-            r";\s*(DROP|INSERT|UPDATE|DELETE|ALTER|CREATE|EXEC)",
-            r"UNION\s+(ALL\s+)?SELECT",
-            r"--\s*$",
-            r"/\*.*\*/",
-            r"OR\s+1\s*=\s*1",
-            r"'\s*OR\s*'",
-        ]
-        for pattern in suspicious_patterns:
-            if re.search(pattern, text, re.IGNORECASE):
-                return True
-        return False
+def _has_multiple_statements(sql: str) -> bool:
+    """检查是否包含多条语句（用 ; 分隔）"""
+    cleaned = re.sub(r"'[^']*'", "", sql)
+    return ";" in cleaned.strip()
 
 
 def validate_and_raise(
     validator: SecurityValidator,
-    plan: QueryPlan,
-    sql: str,
+    ast: exp.Select,
     allowed_tables: set[str],
 ) -> None:
     """
     执行完整校验链，有错误则抛出 PermissionError。
 
-    为什么抛 PermissionError 而不是返回错误列表？
+    为什么抛 PermissionError？
     → Agent 主循环中，PermissionError 会短路修复循环（不再重试）
     → 安全错误不可修复，不应浪费重试次数
     """
-    # 计划级校验
-    plan_errors = validator.validate_plan(plan)
-    if plan_errors:
-        msg = "; ".join(e.message for e in plan_errors)
-        logger.warning("Plan validation failed: %s", msg)
-        raise PermissionError(f"查询计划校验失败: {msg}")
-
-    # SQL 级校验
-    sql_errors = validator.validate_sql(sql, allowed_tables)
-    if sql_errors:
-        msg = "; ".join(e.message for e in sql_errors)
-        logger.warning("SQL validation failed: %s", msg)
+    errors = validator.validate_ast(ast, allowed_tables)
+    if errors:
+        msg = "; ".join(e.message for e in errors)
+        logger.warning("AST validation failed: %s", msg)
         raise PermissionError(f"SQL 校验失败: {msg}")
