@@ -47,7 +47,7 @@ class DBConfig:
 class SecurityConfig:
     """安全策略配置"""
     audit_log_path: str = os.getenv("AUDIT_LOG_PATH", "logs/audit.jsonl")
-    max_repair_rounds: int = int(os.getenv("MAX_REPAIR_ROUNDS", "2"))
+    max_repair_rounds: int = int(os.getenv("MAX_REPAIR_ROUNDS", "3"))
     enable_row_level: bool = os.getenv("ENABLE_ROW_LEVEL", "1") == "1"
     enable_column_level: bool = os.getenv("ENABLE_COLUMN_LEVEL", "1") == "1"
 

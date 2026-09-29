@@ -41,7 +41,7 @@ from app.security.permissions import PermissionChecker
 from app.sql import compiler
 from app.sql.executor import SQLExecutor
 from app.sql.generator import GenerationResult, generate_sql
-from app.sql.repair import attempt_repair
+from app.sql.repair import RepairAttempt, attempt_repair
 from app.sql.validator import SecurityValidator
 
 # 语义记忆（可选）
@@ -523,7 +523,12 @@ class DataAgent:
         request_id: str,
     ) -> tuple[ExecResult | None, str, list[str], list[str]]:
         """
-        校验 + 权限注入 + 执行（含修复循环）。
+        校验 + 权限注入 + 执行（含自适应修复循环）。
+
+        修复策略（借鉴 ReAct 的自适应思路）：
+        - Round 0: 根据错误类型选择策略（列名错误→schema感知，其他→直接修复）
+        - Round 1: 如果上轮同类错误，切换策略
+        - Round 2 (最后一轮): 简化重写（换思路）
 
         返回: (exec_result, final_sql, tables_used, columns_used)
         """
@@ -532,8 +537,12 @@ class DataAgent:
         current_sql = sql
         tables_used: list[str] = []
         columns_used: list[str] = []
+        max_rounds = self.s.security.max_repair_rounds
 
-        for round_idx in range(self.s.security.max_repair_rounds + 1):
+        # 修复历史：记录每轮尝试的 SQL + 错误，避免 LLM 重复犯错
+        repair_history: list[RepairAttempt] = []
+
+        for round_idx in range(max_rounds + 1):
             try:
                 # 解析 SQL 为 AST
                 ast = compiler.parse_sql(current_sql)
@@ -572,12 +581,31 @@ class DataAgent:
                 last_error = str(e)
                 logger.warning("[%s] Failed (round %d): %s", request_id, round_idx, e)
 
-                if round_idx < self.s.security.max_repair_rounds:
+                if round_idx < max_rounds:
+                    # 自适应修复：传入修复历史 + 当前轮次
+                    from app.sql.repair import classify_error
+                    classified = classify_error(str(e), self.metadata)
+
                     repaired = attempt_repair(
-                        current_sql, str(e), schema_context, question,
-                        self.metadata, self.llm,
+                        error_message=str(e),
+                        schema_context=schema_context,
+                        question=question,
+                        metadata=self.metadata,
+                        llm=self.llm,
+                        history=repair_history,
+                        round_idx=round_idx,
+                        max_rounds=max_rounds,
                     )
+
                     if repaired and repaired.sql:
+                        # 记录本轮修复尝试
+                        repair_history.append(RepairAttempt(
+                            round_idx=round_idx,
+                            sql=current_sql,
+                            error=str(e),
+                            error_type=classified.error_type,
+                            strategy=repaired.explanation or "repair",
+                        ))
                         current_sql = repaired.sql
                     else:
                         break
