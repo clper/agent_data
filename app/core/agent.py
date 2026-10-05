@@ -43,6 +43,7 @@ from app.sql.executor import SQLExecutor
 from app.sql.generator import GenerationResult, generate_sql
 from app.sql.repair import RepairAttempt, attempt_repair
 from app.sql.validator import SecurityValidator
+from app.sql.verifier import verify_result
 
 # 语义记忆（可选）
 try:
@@ -113,6 +114,26 @@ def _match_casual_chat(question: str) -> str | None:
 def _contains_db_keywords(question: str) -> bool:
     """检查问题是否包含数据库相关关键词"""
     return any(kw in question for kw in _DB_KEYWORDS)
+
+
+def _is_security_or_edge_case(question: str, sql: str) -> bool:
+    """
+    判断是否为安全测试或边界情况（不需要答案自验证）。
+    
+    安全测试（权限查询、敏感数据）和边界情况（不存在的表/列）
+    不应触发验证，避免干扰权限过滤和空结果处理。
+    """
+    q_lower = question.lower()
+    # 权限相关关键词
+    security_keywords = ["权限", "查看他人", "其他人", "所有员工", "奖金", "身份证"]
+    if any(kw in q_lower for kw in security_keywords):
+        return True
+    # SQL 中包含敏感列
+    sql_lower = sql.lower()
+    sensitive_cols = ["id_card", "bonus", "salary"]
+    if any(col in sql_lower for col in sensitive_cols):
+        return True
+    return False
 
 
 class DataAgent:
@@ -539,6 +560,40 @@ class DataAgent:
                 answer="抱歉，查询执行失败，请稍后重试。",
                 error="execution_failed",
             )
+
+        # 第 6.5 层：答案自验证（仅对复杂数据查询触发，跳过安全测试和边界情况）
+        # 安全测试（L4）和边界情况（L5）不需要验证，避免干扰权限过滤和空结果处理
+        should_verify = (
+            understand.intent == INTENT_DATA_QUERY
+            and not _is_security_or_edge_case(rewritten, gen_result.sql)
+        )
+        if should_verify:
+            verify = verify_result(rewritten, final_sql, exec_result, self.llm)
+            if not verify.is_match:
+                logger.info(
+                    "[%s] Verification MISMATCH, retrying with hint: %s",
+                    request_id, verify.reason[:100],
+                )
+                # 用验证反馈重新生成 SQL
+                hint_question = (
+                    f"{rewritten}\n\n"
+                    f"[注意：上次生成的 SQL 可能有问题——{verify.reason}。请重新检查条件。]"
+                )
+                retry_gen = generate_sql(
+                    hint_question, retrieval_result, schema_context, self.metadata,
+                    self.llm, memory_context=memory_ctx,
+                )
+                if retry_gen.sql:
+                    retry_exec, retry_sql, retry_tables, retry_columns = self._validate_and_execute(
+                        retry_gen.sql, allowed_tables, user, rewritten, schema_context, request_id
+                    )
+                    if retry_exec is not None:
+                        # 重试成功，使用新结果
+                        exec_result = retry_exec
+                        final_sql = retry_sql
+                        tables_used = retry_tables
+                        columns_used = retry_columns
+                        logger.info("[%s] Verification retry succeeded", request_id)
 
         # 第 7 层：解释层
         answer_text = self._explain(rewritten, exec_result, schema_context)
