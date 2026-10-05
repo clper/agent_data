@@ -124,7 +124,7 @@ tables:
   # ═══════════════════════════════════════════
   - name: salary_history
     cn_name: 调薪记录表
-    comment: 员工调薪历史记录，包含调薪前后薪资和原因。支持查询某员工调薪次数、调薪幅度、调薪原因分析
+    comment: 员工薪水薪资调整历史记录，包含调薪前后薪资和原因。支持查询某员工调薪次数、调薪幅度、调薪原因分析、薪资变动、加薪记录、工资变化
     columns:
       - {name: record_id, type: BIGINT, cn: 记录ID, pk: true, comment: "调薪记录唯一编号"}
       - {name: emp_id, type: BIGINT, cn: 员工ID, fk: employee.emp_id, comment: "被调薪的员工编号"}

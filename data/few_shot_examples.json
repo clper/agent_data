@@ -11,8 +11,8 @@
   {
     "id": "join_two_tables",
     "category": "两表JOIN",
-    "question": "销售部本月收入是多少",
-    "sql": "SELECT SUM(r.amount) AS total_revenue FROM revenue r INNER JOIN department d ON r.dept_id = d.dept_id WHERE d.dept_name = '销售部' AND r.month = '2026-09'",
+    "question": "销售部2026年6月的收入是多少",
+    "sql": "SELECT SUM(r.amount) AS total_revenue FROM revenue r INNER JOIN department d ON r.dept_id = d.dept_id WHERE d.dept_name = '销售部' AND r.month = '2026-06'",
     "tables": ["revenue", "department"],
     "tags": ["JOIN", "聚合", "部门过滤", "时间过滤"],
     "note": "通过部门名关联查收入，需JOIN department"
@@ -30,7 +30,7 @@
     "id": "group_by_dept",
     "category": "分组聚合",
     "question": "各部门的平均绩效得分",
-    "sql": "SELECT d.dept_name, AVG(p.score) AS avg_score FROM performance p INNER JOIN employee e ON p.emp_id = e.emp_id INNER JOIN department d ON e.dept_id = d.dept_id GROUP BY d.dept_name",
+    "sql": "SELECT d.dept_name, AVG(p.score) AS avg_score FROM performance p INNER JOIN employee e ON p.emp_id = e.emp_id INNER JOIN department d ON e.dept_id = d.dept_id GROUP BY d.dept_name ORDER BY avg_score DESC",
     "tables": ["performance", "employee", "department"],
     "tags": ["GROUP BY", "AVG", "多表JOIN"],
     "note": "按部门分组求平均"
@@ -47,11 +47,11 @@
   {
     "id": "profit_margin",
     "category": "利润计算",
-    "question": "研发部本月毛利率是多少",
-    "sql": "SELECT (SUM(r.amount) - SUM(c.amount)) * 100.0 / SUM(r.amount) AS profit_margin FROM revenue r INNER JOIN cost c ON r.month = c.month AND r.dept_id = c.dept_id INNER JOIN department d ON r.dept_id = d.dept_id WHERE d.dept_name = '研发部' AND r.month = '2026-09'",
+    "question": "各部门利润率是多少",
+    "sql": "SELECT d.dept_name, (SUM(r.amount) - SUM(c.amount)) * 100.0 / SUM(r.amount) AS profit_rate FROM revenue r INNER JOIN cost c ON r.month = c.month AND r.dept_id = c.dept_id INNER JOIN department d ON r.dept_id = d.dept_id GROUP BY d.dept_name",
     "tables": ["revenue", "cost", "department"],
     "tags": ["比率", "利润", "多表JOIN", "同月同部门关联"],
-    "note": "毛利率 = (收入-成本)/收入*100，revenue和cost通过month+dept_id关联"
+    "note": "利润率 = (收入-成本)/收入*100，revenue和cost通过month+dept_id关联"
   },
   {
     "id": "count_distinct",
@@ -83,11 +83,11 @@
   {
     "id": "top_n",
     "category": "排名取Top",
-    "question": "收入最高的3个月份是哪些",
-    "sql": "SELECT r.month, SUM(r.amount) AS total FROM revenue r GROUP BY r.month ORDER BY total DESC LIMIT 3",
-    "tables": ["revenue"],
+    "question": "迟到次数最多的3个员工",
+    "sql": "SELECT e.name, COUNT(*) AS late_count FROM attendance a INNER JOIN employee e ON a.emp_id = e.emp_id WHERE a.status = 'late' GROUP BY e.name ORDER BY late_count DESC LIMIT 3",
+    "tables": ["attendance", "employee"],
     "tags": ["GROUP BY", "ORDER BY DESC", "LIMIT", "排名"],
-    "note": "按月汇总后排序取前3"
+    "note": "按员工分组统计迟到次数，排序取前3"
   },
   {
     "id": "customer_owner",
@@ -106,5 +106,77 @@
     "tables": ["project"],
     "tags": ["SUM", "WHERE过滤", "状态过滤"],
     "note": "单表聚合 + 状态条件"
+  },
+  {
+    "id": "salary_history",
+    "category": "调薪查询",
+    "question": "张三调过几次薪",
+    "sql": "SELECT COUNT(*) AS adjust_count FROM salary_history WHERE emp_id = (SELECT emp_id FROM employee WHERE name = '张三')",
+    "tables": ["salary_history", "employee"],
+    "tags": ["COUNT", "子查询", "调薪"],
+    "note": "通过子查询获取emp_id，统计调薪次数"
+  },
+  {
+    "id": "salary_change_rate",
+    "category": "调薪幅度",
+    "question": "平均调薪幅度是多少",
+    "sql": "SELECT AVG((new_salary - old_salary) / old_salary * 100) AS avg_rate FROM salary_history",
+    "tables": ["salary_history"],
+    "tags": ["AVG", "计算字段", "调薪"],
+    "note": "计算调薪幅度百分比的平均值"
+  },
+  {
+    "id": "promotion_count",
+    "category": "晋升统计",
+    "question": "2023年有多少人晋升",
+    "sql": "SELECT COUNT(*) AS promo_count FROM promotion WHERE promo_date LIKE '2023-%'",
+    "tables": ["promotion"],
+    "tags": ["COUNT", "LIKE", "时间过滤", "晋升"],
+    "note": "用 LIKE 匹配年份前缀统计晋升人数"
+  },
+  {
+    "id": "meeting_by_dept",
+    "category": "会议统计",
+    "question": "各部门会议数量排名",
+    "sql": "SELECT d.dept_name, COUNT(*) AS meeting_count FROM meeting m INNER JOIN department d ON m.dept_id = d.dept_id GROUP BY d.dept_name ORDER BY meeting_count DESC",
+    "tables": ["meeting", "department"],
+    "tags": ["GROUP BY", "ORDER BY", "COUNT", "会议"],
+    "note": "按部门分组统计会议数量并排序"
+  },
+  {
+    "id": "bu_employee_count",
+    "category": "事业部统计",
+    "question": "各事业部有多少员工",
+    "sql": "SELECT b.bu_name, COUNT(*) AS emp_count FROM employee e INNER JOIN department d ON e.dept_id = d.dept_id INNER JOIN business_unit b ON d.bu_id = b.bu_id GROUP BY b.bu_name",
+    "tables": ["employee", "department", "business_unit"],
+    "tags": ["三表JOIN", "GROUP BY", "COUNT", "事业部"],
+    "note": "employee→department→business_unit 三表关联统计"
+  },
+  {
+    "id": "cost_by_item",
+    "category": "成本构成",
+    "question": "各部门各成本科目的总成本",
+    "sql": "SELECT d.dept_name, c.item, SUM(c.amount) AS total_cost FROM cost c INNER JOIN department d ON c.dept_id = d.dept_id GROUP BY d.dept_name, c.item",
+    "tables": ["cost", "department"],
+    "tags": ["GROUP BY多列", "SUM", "成本构成"],
+    "note": "按部门和科目双维度分组"
+  },
+  {
+    "id": "attendance_rate",
+    "category": "出勤率",
+    "question": "研发部本月出勤率",
+    "sql": "SELECT COUNT(CASE WHEN a.status = 'normal' THEN 1 END) * 100.0 / COUNT(*) AS attend_rate FROM attendance a INNER JOIN employee e ON a.emp_id = e.emp_id INNER JOIN department d ON e.dept_id = d.dept_id WHERE d.dept_name = '研发部' AND a.work_date LIKE '2026-09%'",
+    "tables": ["attendance", "employee", "department"],
+    "tags": ["比率", "CASE WHEN", "出勤率", "时间过滤"],
+    "note": "出勤率 = 正常出勤次数/总考勤次数"
+  },
+  {
+    "id": "customer_industry",
+    "category": "客户分布",
+    "question": "各行业有多少客户",
+    "sql": "SELECT industry, COUNT(*) AS cust_count FROM customer GROUP BY industry ORDER BY cust_count DESC",
+    "tables": ["customer"],
+    "tags": ["GROUP BY", "COUNT", "行业分布"],
+    "note": "按行业分组统计客户数量"
   }
 ]

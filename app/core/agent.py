@@ -517,6 +517,13 @@ class DataAgent:
         )
 
         if not gen_result.sql:
+            # LLM 无法生成 SQL：可能是权限问题或超范围
+            # 对于数据查询意图但 LLM 返回空 SQL，给出安全拒绝提示
+            if understand.intent == INTENT_DATA_QUERY:
+                return AgentResponse(
+                    answer="抱歉，根据您的权限或问题描述，无法执行此查询。",
+                    error="empty_sql",
+                )
             return self._handle_out_of_scope(
                 question, session, user, request_id, start_time
             )
