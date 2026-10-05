@@ -80,6 +80,36 @@ _DB_KEYWORDS = [
 ]
 
 
+# 日常对话关键词（轻量级检测，避免浪费 LLM 调用）
+_CASUAL_PATTERNS: dict[str, list[str]] = {
+    "greeting": ["你好", "您好", "hi", "hello", "在吗", "嗨", "hey", "早上好", "下午好", "晚上好"],
+    "thanks":   ["谢谢", "感谢", "thanks", "thank you", "辛苦了", "麻烦了"],
+    "farewell": ["再见", "拜拜", "bye", "goodbye", "先这样", "没了"],
+}
+
+_CASUAL_RESPONSES: dict[str, str] = {
+    "greeting": "你好！我是企业数据分析助手，可以帮你查询公司运营数据。有什么想了解的？",
+    "thanks":   "不客气！如果还有其他问题，随时问我。",
+    "farewell": "再见！有需要随时来查数据。",
+}
+
+
+def _match_casual_chat(question: str) -> str | None:
+    """
+    检测日常对话（问候/感谢/告别）。
+
+    Returns: 匹配的类别（"greeting"/"thanks"/"farewell"），未匹配返回 None。
+    """
+    q = question.strip().lower()
+    # 短文本才视为日常对话（超过 15 字大概率是正经问题）
+    if len(q) > 15:
+        return None
+    for category, keywords in _CASUAL_PATTERNS.items():
+        if any(kw in q for kw in keywords):
+            return category
+    return None
+
+
 def _contains_db_keywords(question: str) -> bool:
     """检查问题是否包含数据库相关关键词"""
     return any(kw in question for kw in _DB_KEYWORDS)
@@ -154,6 +184,15 @@ class DataAgent:
         session = self.sessions.get_or_create(session_id, user)
 
         try:
+            # 日常对话快速通道（问候/感谢/告别，零 LLM 调用）
+            casual_category = _match_casual_chat(question)
+            if casual_category is not None:
+                answer = _CASUAL_RESPONSES[casual_category]
+                elapsed_ms = (time.perf_counter() - start_time) * 1000
+                turn = Turn(question=question, intent="casual_chat", answer=answer)
+                session.add_turn(turn)
+                return AgentResponse(answer=answer, execution_time_ms=elapsed_ms)
+
             # 多轮对话：如果上一轮是澄清追问，将用户回答与原始问题合并
             question = self._resolve_clarification_followup(question, session, request_id)
 
@@ -370,8 +409,33 @@ class DataAgent:
         request_id: str,
         start_time: float,
     ) -> AgentResponse:
-        """处理超范围问题"""
-        answer = "抱歉，这个问题超出了我的能力范围。我只能帮您查询公司运营数据相关的问题。"
+        """处理超范围问题：SQL 攻击严格拒绝，其他用 LLM 生成友好回复"""
+        # SQL 攻击检测：包含 SQL 关键词的输入必须严格拒绝
+        sql_attack_keywords = [
+            "select", "drop", "delete", "insert", "update", "union",
+            "sleep(", "benchmark(", "--", ";", "'", '"',
+            "1=1", "or 1", "and 1",
+        ]
+        q_lower = question.lower()
+        is_attack = any(kw in q_lower for kw in sql_attack_keywords)
+
+        if is_attack:
+            answer = "抱歉，这个问题超出了我的能力范围。我只能帮您查询公司运营数据相关的问题。"
+        else:
+            system_prompt = (
+                "你是一个企业数据分析助手的对话模块。\n"
+                "用户刚才说的话与数据查询无关，请用友好、自然的语气回复。\n"
+                "规则：\n"
+                "1. 如果是问候、语气词、闲聊，自然回应，像正常聊天一样\n"
+                "2. 如果是你确实做不到的请求（写诗、查天气），礼貌说明并引导到数据查询\n"
+                "3. 回复简短，1-2 句话即可\n"
+                '4. 不要说"抱歉，这个问题超出了我的能力范围"这种机械用语'
+            )
+            messages = [
+                ChatMessage(role="system", content=system_prompt),
+                ChatMessage(role="user", content=question),
+            ]
+            answer = self.llm.chat(messages, temperature=0.5)
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         turn = Turn(question=question, intent=INTENT_OUT_OF_SCOPE, answer=answer)
         session.add_turn(turn)

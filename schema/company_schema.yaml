@@ -9,6 +9,27 @@ database: company_ops
 
 tables:
   # ═══════════════════════════════════════════
+  # 事业部表
+  # ═══════════════════════════════════════════
+  - name: business_unit
+    cn_name: 事业部表
+    comment: 公司事业部（BU）信息，部门隶属于事业部。当前有国内业务、国际业务、创新业务三个事业部
+    columns:
+      - {name: bu_id, type: BIGINT, cn: 事业部ID, pk: true, comment: "事业部唯一编号"}
+      - {name: bu_name, type: VARCHAR(64), cn: 事业部名称, comment: "事业部名称，如国内业务事业部、国际业务事业部"}
+
+  # ═══════════════════════════════════════════
+  # 部门表
+  # ═══════════════════════════════════════════
+  - name: department
+    cn_name: 部门表
+    comment: 公司组织架构中的部门信息，每个部门隶属于一个事业部。当前有销售部、研发部、市场部、人力资源部、财务部、客服部、数据部、运维部共8个部门
+    columns:
+      - {name: dept_id, type: BIGINT, cn: 部门ID, pk: true, comment: "部门唯一编号"}
+      - {name: dept_name, type: VARCHAR(64), cn: 部门名称, comment: "部门中文名，如销售部、研发部、市场部、人力资源部、财务部、客服部、数据部、运维部"}
+      - {name: bu_id, type: BIGINT, cn: 事业部ID, fk: business_unit.bu_id, comment: "所属事业部编号，关联 business_unit 表"}
+
+  # ═══════════════════════════════════════════
   # 员工表
   # ═══════════════════════════════════════════
   - name: employee
@@ -16,22 +37,11 @@ tables:
     comment: 员工基础信息，包含姓名、部门归属、入职日期、薪资等。支持按部门/姓名/入职时间查询员工
     columns:
       - {name: emp_id, type: BIGINT, cn: 员工ID, pk: true, comment: "员工唯一编号，即工号"}
-      - {name: name, type: VARCHAR(64), cn: 姓名, comment: "员工姓名，如张三、李四"}
+      - {name: name, type: VARCHAR(64), cn: 姓名, comment: "员工姓名，如张三、李四、王五等"}
       - {name: dept_id, type: BIGINT, cn: 部门ID, fk: department.dept_id, comment: "所属部门编号，关联 department 表"}
       - {name: hire_date, type: DATE, cn: 入职日期, comment: "员工入职日期，格式 YYYY-MM-DD"}
       - {name: salary, type: DECIMAL(12,2), cn: 月薪, sensitive: true, comment: "员工月度基本工资（元），属敏感数据，普通员工仅可查自己的薪资"}
       - {name: id_card, type: CHAR(18), cn: 身份证号, sensitive: true, comment: "员工身份证号码，属高度敏感信息，任何角色不可查看"}
-
-  # ═══════════════════════════════════════════
-  # 部门表
-  # ═══════════════════════════════════════════
-  - name: department
-    cn_name: 部门表
-    comment: 公司组织架构中的部门信息，每个部门隶属于一个事业部。当前有销售部、研发部、市场部
-    columns:
-      - {name: dept_id, type: BIGINT, cn: 部门ID, pk: true, comment: "部门唯一编号"}
-      - {name: dept_name, type: VARCHAR(64), cn: 部门名称, comment: "部门中文名，如销售部、研发部、市场部"}
-      - {name: bu_id, type: BIGINT, cn: 事业部ID, comment: "所属事业部编号，用于事业部级别的汇总查询"}
 
   # ═══════════════════════════════════════════
   # 绩效表
@@ -51,7 +61,7 @@ tables:
   # ═══════════════════════════════════════════
   - name: attendance
     cn_name: 考勤表
-    comment: 员工每日考勤状态记录，可查询迟到、缺勤、请假、正常出勤情况。支持按月份/部门/员工查询考勤
+    comment: 员工每日考勤状态记录，可查询迟到、缺勤、请假、正常出勤情况。支持按月份/部门/员工查询考勤统计、迟到率、出勤率
     columns:
       - {name: att_id, type: BIGINT, cn: 记录ID, pk: true, comment: "考勤记录唯一编号"}
       - {name: emp_id, type: BIGINT, cn: 员工ID, fk: employee.emp_id, comment: "考勤对应的员工编号"}
@@ -63,10 +73,10 @@ tables:
   # ═══════════════════════════════════════════
   - name: project
     cn_name: 项目表
-    comment: 公司项目信息，包含项目名称、归属部门、预算和状态。支持查询正在进行的项目、项目预算
+    comment: 公司项目信息，包含项目名称、归属部门、预算和状态。支持查询正在进行的项目、项目预算、各部门项目数
     columns:
       - {name: project_id, type: BIGINT, cn: 项目ID, pk: true, comment: "项目唯一编号"}
-      - {name: project_name, type: VARCHAR(128), cn: 项目名称, comment: "项目名称，如 A项目、B项目"}
+      - {name: project_name, type: VARCHAR(128), cn: 项目名称, comment: "项目名称，如智能客服系统、数据中台建设"}
       - {name: dept_id, type: BIGINT, cn: 部门ID, fk: department.dept_id, comment: "项目负责部门编号"}
       - {name: budget, type: DECIMAL(14,2), cn: 项目预算, comment: "项目总预算金额（元）"}
       - {name: status, type: VARCHAR(16), cn: 项目状态, enum: [active, closed], comment: "项目状态：active=进行中/活跃, closed=已关闭/已结束"}
@@ -76,20 +86,20 @@ tables:
   # ═══════════════════════════════════════════
   - name: customer
     cn_name: 客户表
-    comment: 公司客户信息，包含客户名称、等级、行业和负责人。支持按客户名/等级/行业查询客户及负责人
+    comment: 公司客户信息，包含客户名称、等级、行业和负责人。支持按客户名/等级/行业查询客户及负责人，客户分布分析
     columns:
       - {name: cust_id, type: BIGINT, cn: 客户ID, pk: true, comment: "客户唯一编号"}
-      - {name: cust_name, type: VARCHAR(128), cn: 客户名称, comment: "客户公司名称，如客户甲、客户乙"}
+      - {name: cust_name, type: VARCHAR(128), cn: 客户名称, comment: "客户公司名称，如华腾科技、鼎盛集团、客户甲等"}
       - {name: owner_emp_id, type: BIGINT, cn: 负责人员工ID, fk: employee.emp_id, comment: "客户负责人（客户经理）的员工编号"}
       - {name: level, type: CHAR(1), cn: 客户等级, enum: [A, B, C], comment: "客户优先级：A=重要客户, B=普通客户, C=低优先级客户"}
-      - {name: industry, type: VARCHAR(64), cn: 所属行业, comment: "客户所在行业，如互联网、金融、制造"}
+      - {name: industry, type: VARCHAR(64), cn: 所属行业, comment: "客户所在行业，如互联网、金融、制造、教育、医疗、零售、能源、物流、咨询、地产、传媒、电子"}
 
   # ═══════════════════════════════════════════
   # 收入表
   # ═══════════════════════════════════════════
   - name: revenue
     cn_name: 收入表
-    comment: 各部门月度营业收入记录。支持按月份/部门查询收入、营收趋势、收入排名
+    comment: 各部门月度营业收入记录（仅销售部、市场部、客服部有收入）。支持按月份/部门查询收入、营收趋势、收入排名、同比环比分析
     columns:
       - {name: rev_id, type: BIGINT, cn: 记录ID, pk: true, comment: "收入记录唯一编号"}
       - {name: month, type: CHAR(7), cn: 月份, comment: "收入所属月份，格式 YYYY-MM，如 2026-06"}
@@ -101,13 +111,56 @@ tables:
   # ═══════════════════════════════════════════
   - name: cost
     cn_name: 成本表
-    comment: 各部门月度成本明细，按成本科目分类。支持按月份/部门/科目查询成本、费用构成
+    comment: 各部门月度成本明细，按成本科目分类。支持按月份/部门/科目查询成本、费用构成、成本趋势
     columns:
       - {name: cost_id, type: BIGINT, cn: 记录ID, pk: true, comment: "成本记录唯一编号"}
       - {name: month, type: CHAR(7), cn: 月份, comment: "成本所属月份，格式 YYYY-MM，如 2026-06"}
       - {name: dept_id, type: BIGINT, cn: 部门ID, fk: department.dept_id, comment: "发生成本的部门编号"}
-      - {name: item, type: VARCHAR(64), cn: 成本科目, enum: [人力, 差旅, 推广, 办公费], comment: "成本类别，当前数据中的实际值为：人力、差旅、推广、办公费。注意：用户说'人力成本'时应匹配'人力'，说'差旅费'时应匹配'差旅'"}
+      - {name: item, type: VARCHAR(64), cn: 成本科目, enum: [人力, 差旅, 推广, 办公费], comment: "成本类别：人力、差旅、推广、办公费。注意：用户说'人力成本'时应匹配'人力'，说'差旅费'时应匹配'差旅'"}
       - {name: amount, type: DECIMAL(14,2), cn: 成本金额, comment: "当月该科目成本金额（元）"}
+
+  # ═══════════════════════════════════════════
+  # 调薪记录表
+  # ═══════════════════════════════════════════
+  - name: salary_history
+    cn_name: 调薪记录表
+    comment: 员工调薪历史记录，包含调薪前后薪资和原因。支持查询某员工调薪次数、调薪幅度、调薪原因分析
+    columns:
+      - {name: record_id, type: BIGINT, cn: 记录ID, pk: true, comment: "调薪记录唯一编号"}
+      - {name: emp_id, type: BIGINT, cn: 员工ID, fk: employee.emp_id, comment: "被调薪的员工编号"}
+      - {name: effective_date, type: DATE, cn: 生效日期, comment: "调薪生效日期，格式 YYYY-MM-DD"}
+      - {name: old_salary, type: DECIMAL(12,2), cn: 调前薪资, comment: "调薪前的月薪（元）"}
+      - {name: new_salary, type: DECIMAL(12,2), cn: 调后薪资, comment: "调薪后的月薪（元）"}
+      - {name: reason, type: VARCHAR(128), cn: 调薪原因, comment: "调薪原因，如年度调薪、晋升调薪"}
+
+  # ═══════════════════════════════════════════
+  # 晋升记录表
+  # ═══════════════════════════════════════════
+  - name: promotion
+    cn_name: 晋升记录表
+    comment: 员工晋升历史记录，包含晋升前后职位和部门。支持查询某员工晋升记录、某年晋升人数、各部门晋升情况
+    columns:
+      - {name: promo_id, type: BIGINT, cn: 记录ID, pk: true, comment: "晋升记录唯一编号"}
+      - {name: emp_id, type: BIGINT, cn: 员工ID, fk: employee.emp_id, comment: "晋升的员工编号"}
+      - {name: promo_date, type: DATE, cn: 晋升日期, comment: "晋升生效日期，格式 YYYY-MM-DD"}
+      - {name: old_position, type: VARCHAR(64), cn: 原职位, comment: "晋升前的职位名称"}
+      - {name: new_position, type: VARCHAR(64), cn: 新职位, comment: "晋升后的职位名称"}
+      - {name: old_dept_id, type: BIGINT, cn: 原部门ID, comment: "晋升前部门编号（跨部门调动时有值）"}
+      - {name: new_dept_id, type: BIGINT, cn: 新部门ID, comment: "晋升后部门编号（跨部门调动时有值）"}
+
+  # ═══════════════════════════════════════════
+  # 会议记录表
+  # ═══════════════════════════════════════════
+  - name: meeting
+    cn_name: 会议记录表
+    comment: 公司会议记录，包含会议主题、日期、时长、组织部门。支持查询各部门会议数量、会议时长统计、月度会议趋势
+    columns:
+      - {name: meeting_id, type: BIGINT, cn: 会议ID, pk: true, comment: "会议唯一编号"}
+      - {name: title, type: VARCHAR(128), cn: 会议主题, comment: "会议主题名称，如周例会、月度复盘、项目评审、需求对齐等"}
+      - {name: meeting_date, type: DATE, cn: 会议日期, comment: "会议日期，格式 YYYY-MM-DD"}
+      - {name: duration_minutes, type: INT, cn: 时长(分钟), comment: "会议持续时间（分钟）"}
+      - {name: dept_id, type: BIGINT, cn: 组织部门ID, fk: department.dept_id, comment: "组织会议的部门编号"}
+      - {name: organizer_emp_id, type: BIGINT, cn: 组织者员工ID, fk: employee.emp_id, comment: "会议组织者的员工编号"}
 
 # ═══════════════════════════════════════════
 # 预定义业务指标（供 LLM 参考计算口径）
@@ -117,5 +170,8 @@ metrics:
   部门毛利率: "利润率 = (revenue.amount - cost.amount) / revenue.amount * 100%"
   人均绩效: "AVG(performance.score) 关联 employee"
   迟到率: "COUNT(status='late') / COUNT(*) FROM attendance"
+  出勤率: "COUNT(status='normal') / COUNT(*) FROM attendance"
   总成本: "SUM(cost.amount) 可按部门/月份/科目分组"
   净利润: "净利润 = 总收入 - 总成本"
+  调薪幅度: "(salary_history.new_salary - salary_history.old_salary) / salary_history.old_salary * 100%"
+  人均会议时长: "SUM(meeting.duration_minutes) / COUNT(DISTINCT meeting.dept_id)"

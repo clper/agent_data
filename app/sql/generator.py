@@ -18,6 +18,7 @@ from typing import Any
 from app.core.llm import ChatMessage, LLMClient
 from app.schema_rag.retriever import RetrievalResult
 from app.schema_rag.metadata import SchemaMetadata
+from app.sql.few_shot import retrieve_few_shot_examples, format_examples_for_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,17 @@ def generate_sql(
     # 动态注入时间上下文
     time_context = _get_time_context()
     system_prompt = GENERATE_SYSTEM + "\n\n" + time_context
+
+    # 注入动态 Few-shot 示例（根据候选表 + 问题匹配最相关的示例）
+    few_shot_examples = retrieve_few_shot_examples(
+        candidate_tables=retrieval_result.table_names,
+        question=question,
+        max_examples=3,
+    )
+    few_shot_text = format_examples_for_prompt(few_shot_examples)
+    if few_shot_text:
+        system_prompt += "\n\n" + few_shot_text
+        logger.debug("Injected %d few-shot examples: %s", len(few_shot_examples), [e.id for e in few_shot_examples])
 
     # 注入语义记忆（如果有的话）
     if memory_context:

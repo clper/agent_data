@@ -1,0 +1,110 @@
+[
+  {
+    "id": "simple_select",
+    "category": "单表查询",
+    "question": "张三的入职日期是什么时候",
+    "sql": "SELECT hire_date FROM employee WHERE name = '张三'",
+    "tables": ["employee"],
+    "tags": ["单表", "WHERE过滤", "基础查询"],
+    "note": "最简单的单表条件查询"
+  },
+  {
+    "id": "join_two_tables",
+    "category": "两表JOIN",
+    "question": "销售部本月收入是多少",
+    "sql": "SELECT SUM(r.amount) AS total_revenue FROM revenue r INNER JOIN department d ON r.dept_id = d.dept_id WHERE d.dept_name = '销售部' AND r.month = '2026-09'",
+    "tables": ["revenue", "department"],
+    "tags": ["JOIN", "聚合", "部门过滤", "时间过滤"],
+    "note": "通过部门名关联查收入，需JOIN department"
+  },
+  {
+    "id": "multi_table_join",
+    "category": "多表JOIN",
+    "question": "研发部绩效最高的员工是谁",
+    "sql": "SELECT e.name, p.score FROM performance p INNER JOIN employee e ON p.emp_id = e.emp_id INNER JOIN department d ON e.dept_id = d.dept_id WHERE d.dept_name = '研发部' ORDER BY p.score DESC LIMIT 1",
+    "tables": ["performance", "employee", "department"],
+    "tags": ["三表JOIN", "ORDER BY", "LIMIT", "排名"],
+    "note": "三表关联 + 排序取最高"
+  },
+  {
+    "id": "group_by_dept",
+    "category": "分组聚合",
+    "question": "各部门的平均绩效得分",
+    "sql": "SELECT d.dept_name, AVG(p.score) AS avg_score FROM performance p INNER JOIN employee e ON p.emp_id = e.emp_id INNER JOIN department d ON e.dept_id = d.dept_id GROUP BY d.dept_name",
+    "tables": ["performance", "employee", "department"],
+    "tags": ["GROUP BY", "AVG", "多表JOIN"],
+    "note": "按部门分组求平均"
+  },
+  {
+    "id": "rate_calculation",
+    "category": "比率计算",
+    "question": "销售部本月迟到率是多少",
+    "sql": "SELECT COUNT(CASE WHEN a.status = 'late' THEN 1 END) * 100.0 / COUNT(*) AS late_rate FROM attendance a INNER JOIN employee e ON a.emp_id = e.emp_id INNER JOIN department d ON e.dept_id = d.dept_id WHERE d.dept_name = '销售部' AND a.work_date LIKE '2026-09%'",
+    "tables": ["attendance", "employee", "department"],
+    "tags": ["比率", "CASE WHEN", "COUNT", "LIKE"],
+    "note": "迟到率 = 迟到次数/总考勤次数，用 CASE WHEN 条件计数"
+  },
+  {
+    "id": "profit_margin",
+    "category": "利润计算",
+    "question": "研发部本月毛利率是多少",
+    "sql": "SELECT (SUM(r.amount) - SUM(c.amount)) * 100.0 / SUM(r.amount) AS profit_margin FROM revenue r INNER JOIN cost c ON r.month = c.month AND r.dept_id = c.dept_id INNER JOIN department d ON r.dept_id = d.dept_id WHERE d.dept_name = '研发部' AND r.month = '2026-09'",
+    "tables": ["revenue", "cost", "department"],
+    "tags": ["比率", "利润", "多表JOIN", "同月同部门关联"],
+    "note": "毛利率 = (收入-成本)/收入*100，revenue和cost通过month+dept_id关联"
+  },
+  {
+    "id": "count_distinct",
+    "category": "计数去重",
+    "question": "本月有多少员工有迟到记录",
+    "sql": "SELECT COUNT(DISTINCT a.emp_id) AS late_employee_count FROM attendance a WHERE a.status = 'late' AND a.work_date LIKE '2026-09%'",
+    "tables": ["attendance"],
+    "tags": ["COUNT DISTINCT", "WHERE过滤", "时间过滤"],
+    "note": "用 COUNT(DISTINCT emp_id) 去重统计人数"
+  },
+  {
+    "id": "subquery_compare",
+    "category": "子查询比较",
+    "question": "哪些员工的绩效高于部门平均水平",
+    "sql": "SELECT e.name, p.score, d.dept_name FROM performance p INNER JOIN employee e ON p.emp_id = e.emp_id INNER JOIN department d ON e.dept_id = d.dept_id WHERE p.score > (SELECT AVG(p2.score) FROM performance p2 INNER JOIN employee e2 ON p2.emp_id = e2.emp_id WHERE e2.dept_id = e.dept_id AND p2.month = p.month)",
+    "tables": ["performance", "employee", "department"],
+    "tags": ["子查询", "关联子查询", "比较"],
+    "note": "用关联子查询计算同部门同月平均绩效作比较"
+  },
+  {
+    "id": "time_range",
+    "category": "时间范围",
+    "question": "今年各部门的总收入",
+    "sql": "SELECT d.dept_name, SUM(r.amount) AS total_revenue FROM revenue r INNER JOIN department d ON r.dept_id = d.dept_id WHERE r.month LIKE '2026-%' GROUP BY d.dept_name",
+    "tables": ["revenue", "department"],
+    "tags": ["LIKE", "时间范围", "GROUP BY", "今年"],
+    "note": "今年用 LIKE '2026-%' 匹配所有月份"
+  },
+  {
+    "id": "top_n",
+    "category": "排名取Top",
+    "question": "收入最高的3个月份是哪些",
+    "sql": "SELECT r.month, SUM(r.amount) AS total FROM revenue r GROUP BY r.month ORDER BY total DESC LIMIT 3",
+    "tables": ["revenue"],
+    "tags": ["GROUP BY", "ORDER BY DESC", "LIMIT", "排名"],
+    "note": "按月汇总后排序取前3"
+  },
+  {
+    "id": "customer_owner",
+    "category": "客户关联",
+    "question": "张三负责了哪些客户",
+    "sql": "SELECT c.cust_name, c.level, c.industry FROM customer c INNER JOIN employee e ON c.owner_emp_id = e.emp_id WHERE e.name = '张三'",
+    "tables": ["customer", "employee"],
+    "tags": ["JOIN", "外键关联", "基础查询"],
+    "note": "通过 owner_emp_id 关联员工和客户"
+  },
+  {
+    "id": "project_budget",
+    "category": "项目统计",
+    "question": "进行中的项目总预算是多少",
+    "sql": "SELECT SUM(budget) AS total_budget FROM project WHERE status = 'active'",
+    "tables": ["project"],
+    "tags": ["SUM", "WHERE过滤", "状态过滤"],
+    "note": "单表聚合 + 状态条件"
+  }
+]
